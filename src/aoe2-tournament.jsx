@@ -39,6 +39,44 @@ const CIVS = ["Any (Random)","Aztecs","Berbers","Britons","Byzantines","Celts","
 const STORAGE_KEY    = "aoe2_v5_master";
 const SUPER_PW_KEY   = "aoe2_v5_superpw";
 const SUPER_DEFAULT  = "Wireless";
+
+// ── JSONBIN CLOUD STORAGE ──────────────────────────────────────────────────
+// JSONBin.io free tier — stores JSON data in the cloud, accessible from any browser
+// Players/admins on ANY device see the same tournaments
+// Set VITE_JSONBIN_KEY and VITE_JSONBIN_BIN in Railway environment variables
+const JSONBIN_KEY = import.meta.env?.VITE_JSONBIN_KEY || null;
+const JSONBIN_BIN = import.meta.env?.VITE_JSONBIN_BIN || null;
+const JSONBIN_URL = JSONBIN_BIN ? `https://api.jsonbin.io/v3/b/${JSONBIN_BIN}` : null;
+
+let _saveDebounce = null;
+
+async function cloudLoad() {
+  if (!JSONBIN_KEY || !JSONBIN_URL) return null;
+  try {
+    const r = await fetch(`${JSONBIN_URL}/latest`, {
+      headers: { "X-Master-Key": JSONBIN_KEY, "X-Bin-Meta": "false" }
+    });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
+}
+
+async function cloudSave(data) {
+  if (!JSONBIN_KEY || !JSONBIN_URL) return;
+  clearTimeout(_saveDebounce);
+  _saveDebounce = setTimeout(async () => {
+    try {
+      await fetch(JSONBIN_URL, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Master-Key": JSONBIN_KEY,
+        },
+        body: JSON.stringify(data),
+      });
+    } catch(e) { console.warn("Cloud save failed", e); }
+  }, 1500); // debounce 1.5s to avoid hammering API
+}
 const PLACEMENT_GAMES = 5;
 const SWISS_ROUNDS    = 7;
 const TOP8_CUT        = 8;
@@ -408,16 +446,27 @@ export default function App(){
   useEffect(()=>{
     const load=async()=>{
       try{
+        // 1. Try cloud storage first (works across all browsers/devices)
+        const cloud=await cloudLoad();
+        if(cloud&&cloud.tournaments!==undefined){
+          setMaster(cloud);
+          try{localStorage.setItem(STORAGE_KEY,JSON.stringify(cloud));}catch{}
+          return;
+        }
+        // 2. Fall back to localStorage (single browser)
         if(window.storage){
           const r=await window.storage.get(STORAGE_KEY).catch(()=>null);
           if(r?.value){setMaster(JSON.parse(r.value));return;}
         }
-        const s=localStorage.getItem(STORAGE_KEY);
-        if(s) setMaster(JSON.parse(s));
+        const s=localStorage.getItem(STORAGE_KEY)||sessionStorage.getItem(STORAGE_KEY);
+        if(s){
+          const parsed=JSON.parse(s);
+          setMaster(parsed);
+          try{sessionStorage.setItem(STORAGE_KEY,s);}catch{}
+        }
       }catch(e){console.warn("Load failed",e);}
     };
     load();
-    // Hash routing
     const onHash=()=>{
       const hash=window.location.hash||"";
       if(hash.startsWith("#/t/")) setRoute({type:"tournament",code:hash.slice(4).toUpperCase()});
@@ -431,8 +480,12 @@ export default function App(){
   const saveMaster=useCallback((next)=>{
     setMaster(next);
     const s=JSON.stringify(next);
+    // Save to cloud (works across all devices/browsers)
+    cloudSave(next);
+    // Also save locally as fallback
     if(window.storage) window.storage.set(STORAGE_KEY,s).catch(()=>{});
     try{localStorage.setItem(STORAGE_KEY,s);}catch{}
+    try{sessionStorage.setItem(STORAGE_KEY,s);}catch{}
   },[]);
 
   // Shorthand: update a specific tournament
@@ -1396,6 +1449,47 @@ export default function App(){
             {superTab==="settings"&&(
               <div style={S.card}>
                 <div style={S.cardT}>⚙️ Platform Settings</div>
+
+                {/* Cloud storage status */}
+                <div style={{padding:"14px",background:JSONBIN_KEY?C.moss+"22":C.ember+"22",
+                  border:`1px solid ${JSONBIN_KEY?C.moss:C.ember}`,borderRadius:6,marginBottom:16}}>
+                  <div style={{fontWeight:"bold",color:JSONBIN_KEY?C.moss:C.ember,marginBottom:6}}>
+                    {JSONBIN_KEY?"☁️ Cloud Storage: CONNECTED":"⚠️ Cloud Storage: NOT CONFIGURED"}
+                  </div>
+                  {JSONBIN_KEY?(
+                    <div style={{color:C.dim,fontSize:12,lineHeight:1.7}}>
+                      Tournament data saves to JSONBin cloud. All browsers and devices see the same data.
+                      Bin ID: <code style={{color:C.light}}>{JSONBIN_BIN}</code>
+                    </div>
+                  ):(
+                    <div style={{color:C.dim,fontSize:12,lineHeight:1.7}}>
+                      Data is only saved in this browser's localStorage. Other browsers and devices cannot see your tournaments.
+                      <br/><strong style={{color:C.light}}>To fix:</strong> Add <code>VITE_JSONBIN_KEY</code> and <code>VITE_JSONBIN_BIN</code> environment variables in Railway (see setup guide below).
+                    </div>
+                  )}
+                </div>
+
+                {/* JSONBin setup guide */}
+                {!JSONBIN_KEY&&(
+                  <div style={{padding:"14px",background:C.obsidian,border:`1px solid ${C.stone}`,borderRadius:6,marginBottom:16,fontSize:12,lineHeight:1.8}}>
+                    <div style={{color:C.gold,fontWeight:"bold",marginBottom:8}}>📋 How to set up cloud storage (5 minutes, free):</div>
+                    {[
+                      <>Go to <strong style={{color:C.gold}}>https://jsonbin.io</strong> and create a free account.</>,
+                      <>Click <strong>API Keys</strong> in the top menu. Copy your <strong>Master Key</strong>.</>,
+                      <>Click <strong>Bins</strong> → <strong>Create Bin</strong>. Paste <code style={{background:C.stone,padding:"1px 4px",borderRadius:2}}>{"{ }"}</code> as the content. Click Create. Copy the <strong>Bin ID</strong> from the URL.</>,
+                      <>In Railway: open your service → <strong>Variables</strong> tab → Add Variable:</>,
+                      <><code style={{background:C.stone,padding:"2px 6px",borderRadius:2}}>VITE_JSONBIN_KEY</code> = your Master Key</>,
+                      <><code style={{background:C.stone,padding:"2px 6px",borderRadius:2}}>VITE_JSONBIN_BIN</code> = your Bin ID</>,
+                      <>Click <strong>Deploy</strong>. Railway rebuilds automatically. Refresh this page — cloud status turns green.</>,
+                    ].map((step,i)=>(
+                      <div key={i} style={{display:"flex",gap:10,marginBottom:4}}>
+                        <span style={{color:C.gold,minWidth:20,fontWeight:"bold"}}>{i+1}.</span>
+                        <span style={{color:C.light}}>{step}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 <div style={{padding:"14px",background:C.obsidian,borderRadius:6,marginBottom:14}}>
                   <div style={{color:C.gold,fontWeight:"bold",marginBottom:8}}>Master (Super Admin) Password</div>
                   <button style={S.btn("gold")} onClick={()=>setChangePwModal({
