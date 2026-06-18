@@ -399,7 +399,7 @@ export default function App(){
   const [vetoMatch,setVetoMatch]       = useState(null);
   const [schedModal,setSchedModal]     = useState(null);
   const [newTourModal,setNewTourModal] = useState(false);
-  const [newTourForm,setNewTourForm]   = useState({code:"",name:"",hostName:"",adminPassword:""});
+  const [newTourForm,setNewTourForm]   = useState({code:"",name:"",hostName:"",adminPassword:"",adminFee:5});
   const [regForm,setRegForm]           = useState({name:"",discord:"",email:"",password:"",confirmPw:"",civ:CIVS[0],startElo:800,timezone:TIMEZONES[0].value});
   const [showRegPw,setShowRegPw]       = useState(false);
   const [regSuccess,setRegSuccess]     = useState(false);
@@ -467,17 +467,18 @@ export default function App(){
   }
 
   function createTournament(){
-    const{code,name,hostName,adminPassword}=newTourForm;
+    const{code,name,hostName,adminPassword,adminFee}=newTourForm;
     if(!code.trim()||!name.trim()) return toast$("Code and name required","error");
     const clean=code.trim().toUpperCase().replace(/\s/g,"-");
     if(master.tournaments[clean]) return toast$("Tournament code already exists","error");
     const tour=makeTournament(clean,name,hostName);
+    tour.season.adminFee=Number(adminFee)||0;
     if(adminPassword.trim()) tour.adminPassword=pwHash(adminPassword.trim());
     tour.adminPasswordPlain=adminPassword.trim()||"changeme";
     saveMaster(addMasterLog(`✅ Tournament created: ${clean} — ${name}`,
       {...master,tournaments:{...master.tournaments,[clean]:tour}}));
     setNewTourModal(false);
-    setNewTourForm({code:"",name:"",hostName:"",adminPassword:""});
+    setNewTourForm({code:"",name:"",hostName:"",adminPassword:"",adminFee:5});
     toast$(`Tournament ${clean} created!`);
   }
 
@@ -1328,12 +1329,22 @@ export default function App(){
                         </button>
                       </div>
                       <div style={{padding:"10px",background:C.obsidian,borderRadius:6}}>
-                        <div style={{color:C.dim,fontSize:10,marginBottom:4}}>FEES</div>
-                        <div style={{fontSize:12}}>Admin fee: <strong style={{color:C.gold}}>${tour.season.adminFee||0}</strong></div>
-                        <div style={{fontSize:12}}>Prize fee: <strong style={{color:C.gold}}>${tour.season.prizeFee||0}</strong></div>
-                        <div style={{color:C.moss,fontSize:11,marginTop:4}}>
-                          ${(tour.feeCollected||[]).filter(f=>f.type==="adminFee").reduce((s,f)=>s+f.amount,0)} admin collected
+                        <div style={{color:C.dim,fontSize:10,marginBottom:4}}>PLATFORM ADMIN FEE (your cut)</div>
+                        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                          <span style={{color:C.gold,fontSize:18,fontWeight:"bold"}}>${tour.season.adminFee||0}</span>
+                          <span style={{color:C.dim,fontSize:11}}>per player</span>
                         </div>
+                        <div style={{display:"flex",gap:6,marginTop:8,alignItems:"center"}}>
+                          <input type="number" min={0} defaultValue={tour.season.adminFee||0}
+                            style={{...S.inp,width:80,padding:"5px 8px",fontSize:12}}
+                            onBlur={e=>{
+                              const v=Number(e.target.value)||0;
+                              saveTour(tour.code,t=>({...t,season:{...t.season,adminFee:v}}),`💰 Admin fee updated to $${v}`);
+                              toast$(`Admin fee set to $${v}`);
+                            }}/>
+                          <span style={{color:C.dim,fontSize:11}}>$ — edit &amp; click away to save</span>
+                        </div>
+                        <div style={{color:C.dim,fontSize:10,marginTop:4}}>Only you (super admin) can change this.</div>
                       </div>
                     </div>
                   </div>
@@ -1437,7 +1448,7 @@ export default function App(){
           <div style={S.modal}>
             <div style={{...S.card,maxWidth:480,width:"90%"}}>
               <div style={S.cardT}>+ Create New Tournament</div>
-              <div style={S.grid("1fr 1fr",12)}>
+                <div style={S.grid("1fr 1fr",12)}>
                 <div><label style={S.lbl}>Tournament Code (URL slug)</label>
                   <input style={S.inp} placeholder="e.g. NA-KINGS" value={newTourForm.code}
                     onChange={e=>setNewTourForm(f=>({...f,code:e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g,"")}))}/></div>
@@ -1450,7 +1461,13 @@ export default function App(){
                 <div><label style={S.lbl}>Tournament Admin Password</label>
                   <input style={S.inp} type="password" placeholder="Leave blank for 'changeme'" value={newTourForm.adminPassword}
                     onChange={e=>setNewTourForm(f=>({...f,adminPassword:e.target.value}))}/></div>
-              </div>
+                <div>
+                  <label style={S.lbl}>Platform Admin Fee ($ per player)</label>
+                  <input style={S.inp} type="number" min={0} value={newTourForm.adminFee}
+                    onChange={e=>setNewTourForm(f=>({...f,adminFee:e.target.value}))}/>
+                  <div style={{color:C.dim,fontSize:10,marginTop:3}}>This is your cut per player. Only you can set this.</div>
+                </div>
+                </div>
               {newTourForm.code&&(
                 <div style={{color:C.teal,fontSize:12,marginTop:8}}>
                   URL: {tourUrl(newTourForm.code||"CODE")}
@@ -2086,13 +2103,21 @@ export default function App(){
                     ["Placement Games","placementGames","number",T.season.placementGames],
                     ["Swiss Rounds","swissRounds","number",T.season.swissRounds],
                     ["Top N Playoff Cutoff","top8Cut","number",T.season.top8Cut],
-                    ["Platform Admin Fee ($)","adminFee","number",T.season.adminFee||0],
-                    ["Prize Pool Fee ($)","prizeFee","number",T.season.prizeFee||0],
+                    ["Prize Pool Fee ($) — distributed to winners","prizeFee","number",T.season.prizeFee||0],
                   ].map(([label,field,type,val])=>(
                     <div key={field}><label style={S.lbl}>{label}</label>
                       <input style={S.inp} type={type} value={val}
                         onChange={e=>saveTour(T.code,t=>({...t,season:{...t.season,[field]:type==="number"?Number(e.target.value):e.target.value}}))}/></div>
                   ))}
+                  {/* Admin fee is READ-ONLY here — only the platform super admin can set it */}
+                  <div>
+                    <label style={S.lbl}>Platform Admin Fee ($) — set by platform organiser</label>
+                    <div style={{...S.inp,background:C.stone,color:C.dim,cursor:"not-allowed",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                      <span>${T.season.adminFee||0} per player</span>
+                      <span style={{fontSize:10,letterSpacing:1}}>🔒 LOCKED</span>
+                    </div>
+                    <div style={{color:C.dim,fontSize:10,marginTop:3}}>Contact the platform organiser to change this amount.</div>
+                  </div>
                   <div style={{gridColumn:"1/-1"}}><label style={S.lbl}>Payment Instructions (public)</label>
                     <input style={S.inp} placeholder="e.g. Interac e-Transfer to host@email.com" value={T.season.paymentInfo||""}
                       onChange={e=>saveTour(T.code,t=>({...t,season:{...t.season,paymentInfo:e.target.value}}))}/></div>
@@ -2292,28 +2317,28 @@ export default function App(){
               <div style={S.card}>
                 <div style={S.cardT}>💰 Payment Tracking
                   <span style={{...S.badge(C.gold),marginLeft:10,fontSize:11}}>
-                    ${(T.feeCollected||[]).filter(f=>f.type==="adminFee").reduce((s,f)=>s+f.amount,0)} admin · ${(T.feeCollected||[]).filter(f=>f.type==="prizeFee").reduce((s,f)=>s+f.amount,0)} prize
+                    ${(T.feeCollected||[]).filter(f=>f.type==="prizeFee").reduce((s,f)=>s+f.amount,0)} prize fees collected
                   </span>
                 </div>
-                {(T.season.adminFee||0)+(T.season.prizeFee||0)===0&&<p style={{color:C.dim}}>No entry fee set.</p>}
+                {/* Info banner explaining the fee split */}
+                <div style={{background:C.steel+"18",border:`1px solid ${C.steel}44`,borderRadius:6,
+                  padding:"10px 14px",marginBottom:14,fontSize:12,color:C.light,lineHeight:1.6}}>
+                  <strong style={{color:C.gold}}>Fee responsibilities:</strong><br/>
+                  You (server host) collect and track the <strong>Prize Pool Fee (${T.season.prizeFee||0}/player)</strong> here.<br/>
+                  The platform admin fee (${T.season.adminFee||0}/player) is tracked separately by the platform organiser — they will contact you about it.
+                </div>
+                {(T.season.prizeFee||0)===0&&<p style={{color:C.dim}}>Prize fee is set to $0. Update in Admin → Season to track payments.</p>}
                 {T.players.filter(p=>p.classified&&!p.banned).map(p=>{
-                  const totalFee=(T.season.adminFee||0)+(T.season.prizeFee||0);
-                  const fullPaid=p.adminFeePaid&&p.prizeFeePaid;
                   return(<div key={p.id} style={{...S.row(10),padding:"10px 12px",borderRadius:6,
-                    background:fullPaid?C.moss+"18":C.ember+"18",
-                    border:`1px solid ${fullPaid?C.moss:C.ember}44`,marginBottom:8,flexWrap:"wrap"}}>
+                    background:p.prizeFeePaid?C.moss+"18":C.ember+"18",
+                    border:`1px solid ${p.prizeFeePaid?C.moss:C.ember}44`,marginBottom:8,flexWrap:"wrap"}}>
                     <div style={{flex:1}}>
                       <div style={{fontWeight:"bold",fontSize:13}}>{p.name}</div>
-                      <div style={{color:C.dim,fontSize:11}}>{p.email}</div>
+                      <div style={{color:C.dim,fontSize:11}}>{p.email} · {p.discord}</div>
                     </div>
-                    <div style={S.row(6)}>
-                      <button style={S.btn(p.adminFeePaid?"stone":"gold")} onClick={()=>markFeePaid(T.code,p.id,"adminFee")}>
-                        {p.adminFeePaid?`✓ Admin $${T.season.adminFee}`:`Admin Fee $${T.season.adminFee||0}`}
-                      </button>
-                      <button style={S.btn(p.prizeFeePaid?"stone":"gold")} onClick={()=>markFeePaid(T.code,p.id,"prizeFee")}>
-                        {p.prizeFeePaid?`✓ Prize $${T.season.prizeFee}`:`Prize Fee $${T.season.prizeFee||0}`}
-                      </button>
-                    </div>
+                    <button style={S.btn(p.prizeFeePaid?"stone":"gold")} onClick={()=>markFeePaid(T.code,p.id,"prizeFee")}>
+                      {p.prizeFeePaid?`✓ Prize $${T.season.prizeFee} received`:`Mark Prize Fee $${T.season.prizeFee||0} Received`}
+                    </button>
                   </div>);
                 })}
               </div>
@@ -2472,11 +2497,10 @@ export default function App(){
                         {!p.classified&&<div style={{color:C.dim,fontSize:11,marginTop:8}}>{p.placementsDone}/{p.placementsNeeded} placements</div>}
                         {totalFee>0&&(
                           <div style={{marginTop:8,display:"flex",gap:4,flexDirection:"column"}}>
-                            <span style={S.badge(p.adminFeePaid?C.moss:C.ember)}>
-                              {p.adminFeePaid?`✓ Admin $${T.season.adminFee||0}`:`⏳ Admin Fee $${T.season.adminFee||0}`}
-                            </span>
-                            <span style={S.badge(p.prizeFeePaid?C.moss:C.ember)}>
-                              {p.prizeFeePaid?`✓ Prize $${T.season.prizeFee||0}`:`⏳ Prize Fee $${T.season.prizeFee||0}`}
+                            <span style={S.badge((p.adminFeePaid&&p.prizeFeePaid)?C.moss:C.ember)}>
+                              {(p.adminFeePaid&&p.prizeFeePaid)
+                                ?`✓ Entry Fee Paid ($${totalFee})`
+                                :`⏳ Entry Fee $${totalFee} — contact organiser`}
                             </span>
                           </div>
                         )}
