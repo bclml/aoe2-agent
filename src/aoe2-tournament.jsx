@@ -2703,31 +2703,19 @@ export default function App(){
             {/* GUIDE */}
             {tAdminTab==="guide"&&(
               <div style={S.card}>
-                <div style={S.cardT}>📖 Admin Guides</div>
+                <div style={S.cardT}>📖 Admin Guide</div>
                 <p style={{color:C.dim,fontSize:13,marginBottom:16,lineHeight:1.7}}>
-                  Step-by-step PDF guides covering everything from setup to running a full season — registration, time windows, placement matches, settings voting, Swiss rounds, PayPal payments, prize splits, and disputes.
+                  A step-by-step PDF guide covering everything from setup to running a full season — registration, time windows, placement matches, settings voting, Swiss rounds, PayPal payments, prize splits, and disputes.
                 </p>
-                <div style={S.grid("1fr 1fr",14)}>
-                  <div style={{padding:"16px",background:C.obsidian,borderRadius:6,border:`1px solid ${C.gold}44`}}>
-                    <div style={{fontSize:28,marginBottom:8}}>📗</div>
-                    <div style={{color:C.gold,fontWeight:"bold",fontSize:14,marginBottom:6}}>Discord Server Admin Guide</div>
-                    <div style={{color:C.dim,fontSize:12,marginBottom:12,lineHeight:1.6}}>
-                      For you — the tournament host. Covers season setup, PayPal/prize configuration, running every phase, and distributing prizes.
-                    </div>
-                    <a href="/AoE2-Guide-ServerAdmin.pdf" download style={{...S.btn("gold"),display:"inline-block",textDecoration:"none"}}>
-                      ⬇️ Download PDF
-                    </a>
+                <div style={{padding:"16px",background:C.obsidian,borderRadius:6,border:`1px solid ${C.gold}44`,maxWidth:420}}>
+                  <div style={{fontSize:28,marginBottom:8}}>📗</div>
+                  <div style={{color:C.gold,fontWeight:"bold",fontSize:14,marginBottom:6}}>Discord Server Admin Guide</div>
+                  <div style={{color:C.dim,fontSize:12,marginBottom:12,lineHeight:1.6}}>
+                    For you — the tournament host. Covers season setup, PayPal/prize configuration, running every phase, and distributing prizes.
                   </div>
-                  <div style={{padding:"16px",background:C.obsidian,borderRadius:6,border:`1px solid ${C.steel}44`}}>
-                    <div style={{fontSize:28,marginBottom:8}}>📘</div>
-                    <div style={{color:C.steel,fontWeight:"bold",fontSize:14,marginBottom:6}}>Platform Organiser Guide</div>
-                    <div style={{color:C.dim,fontSize:12,marginBottom:12,lineHeight:1.6}}>
-                      Background reference covering the full platform — hosting, creating tournaments, and the multi-server admin fee model.
-                    </div>
-                    <a href="/AoE2-Guide-Organiser.pdf" download style={{...S.btn("steel"),display:"inline-block",textDecoration:"none"}}>
-                      ⬇️ Download PDF
-                    </a>
-                  </div>
+                  <a href="/AoE2-Guide-ServerAdmin.pdf" download style={{...S.btn("gold"),display:"inline-block",textDecoration:"none"}}>
+                    ⬇️ Download PDF
+                  </a>
                 </div>
               </div>
             )}
