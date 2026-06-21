@@ -263,31 +263,32 @@ function makeTournament(code, name, hostName){
     id:uid(),
     code:code.toUpperCase().replace(/\s/g,"-"),
     name, hostName,
+    hostEmail:"",          // PayPal email for receiving prize fees — REQUIRED before launch
     adminPassword:pwHash("changeme"),
-    adminPasswordPlain:"changeme", // shown once to super-admin
+    adminPasswordPlain:"changeme",
     lobbyPrefix:code.toUpperCase().slice(0,6),
     season:{
       name:"Season 1",
-      tiers:[...DEFAULT_TIERS.map(t=>({...t,id:uid()}))],
+      tiers:[...DEFAULT_TIERS.map(t=>({...t,id:uid(),prizeSplit:{first:60,second:25,third:15}}))],
       swissRounds:SWISS_ROUNDS,
       top8Cut:TOP8_CUT,
       placementGames:PLACEMENT_GAMES,
-      adminFee:5,        // goes to platform owner (you)
-      prizeFee:10,       // goes to Discord server host
+      adminFee:5,
+      prizeFee:10,
       feeNote:"",
       paymentInfo:"",
       registrationOpen:false,
       timeline:null,
-      timeWindows:[],    // [{day:"sat",startHour:14,endHour:22,label:"Saturday afternoon"}]
+      timeWindows:[],
       placementSettings:{...DEFAULT_PLACEMENT_SETTINGS},
     },
     players:[],
     bannedEmails:[],
     reports:[],
     placementMatches:[],
-    tournaments:{},     // tierId -> bracket object
+    tournaments:{},
     log:[],
-    feeCollected:[],    // [{playerId,name,adminFee,prizeFee,paidAt,paidTo}]
+    feeCollected:[],       // [{playerId,name,type,amount,paidAt}] — historical record, never reset
     createdAt:new Date().toISOString(),
   };
 }
@@ -568,7 +569,9 @@ export default function App(){
       email:email.trim().toLowerCase(),pwHash:pwHash(password),
       civ,elo,timezone,tierId:tier.id,tier,
       placementsDone:0,placementsNeeded:tour.season.placementGames,
-      classified:false,paid:false,adminFeePaid:false,prizeFeePaid:false,banned:false,
+      classified:false,banned:false,
+      // paymentStatus: "none" | "submitted" | "received"
+      paymentStatus:"none",
       swissWins:0,swissLosses:0,buchholz:0,wins:0,losses:0,
       registeredAt:new Date().toISOString(),
     };
@@ -610,30 +613,57 @@ export default function App(){
     catch{return iso;}
   }
 
-  // ── FEE MANAGEMENT ────────────────────────────────────────────────────────
-  function markFeePaid(code,playerId,feeType){
+  // ── PAYMENT STATUS MANAGEMENT ────────────────────────────────────────────
+  // Player marks their own payment as "submitted" after paying via PayPal
+  function playerSubmitPayment(code,playerId){
+    saveTour(code,t=>({...t,
+      players:t.players.map(p=>p.id!==playerId?p:{...p,paymentStatus:"submitted"})
+    }),`💳 ${master.tournaments[code]?.players.find(p=>p.id===playerId)?.name} submitted payment`);
+    toast$("Payment marked as submitted! Waiting for organiser to confirm receipt.");
+  }
+
+  // Tournament admin confirms full receipt of both admin fee + prize fee
+  function adminConfirmPaymentReceived(code,playerId){
+    const tour=master.tournaments[code];if(!tour) return;
+    const player=tour.players.find(p=>p.id===playerId);if(!player) return;
+    const already=tour.feeCollected?.some(f=>f.playerId===playerId&&f.seasonName===tour.season.name);
     saveTour(code,t=>{
-      const players=t.players.map(p=>{
-        if(p.id!==playerId) return p;
-        return{...p,[feeType+"Paid"]:true};
-      });
-      // record in feeCollected
-      const player=t.players.find(p=>p.id===playerId);
-      const existing=t.feeCollected?.find(f=>f.playerId===playerId&&f.type===feeType);
-      if(existing) return{...t,players};
-      const entry={
-        id:uid(),playerId,name:player?.name,type:feeType,
-        amount:feeType==="adminFee"?t.season.adminFee:t.season.prizeFee,
-        paidAt:new Date().toISOString(),
-      };
-      // update master total for admin fees
-      if(feeType==="adminFee"){
-        saveMaster(prev=>({...prev,
-          totalAdminFeesCollected:(prev.totalAdminFeesCollected||0)+t.season.adminFee}));
-      }
-      return{...t,players,feeCollected:[...(t.feeCollected||[]),entry]};
-    },`💰 ${feeType==="adminFee"?"Admin":"Prize"} fee marked paid for ${T?.players.find(p=>p.id===playerId)?.name}`);
-    toast$("Fee marked as paid");
+      const players=t.players.map(p=>p.id!==playerId?p:{...p,paymentStatus:"received"});
+      if(already) return{...t,players};
+      const entries=[
+        {id:uid(),playerId,name:player.name,email:player.email,discord:player.discord,
+         type:"adminFee",amount:t.season.adminFee||0,paidAt:new Date().toISOString(),seasonName:t.season.name},
+        {id:uid(),playerId,name:player.name,email:player.email,discord:player.discord,
+         type:"prizeFee",amount:t.season.prizeFee||0,paidAt:new Date().toISOString(),seasonName:t.season.name},
+      ];
+      return{...t,players,feeCollected:[...(t.feeCollected||[]),...entries]};
+    },`✅ Payment confirmed received for ${player.name}`);
+    toast$(`${player.name}'s payment confirmed — they can now play!`);
+  }
+
+  // Admin reverts a payment status (e.g. mistake correction)
+  function adminRevertPayment(code,playerId,newStatus){
+    saveTour(code,t=>({...t,
+      players:t.players.map(p=>p.id!==playerId?p:{...p,paymentStatus:newStatus})
+    }),`🔄 Payment status reverted to "${newStatus}" for ${master.tournaments[code]?.players.find(p=>p.id===playerId)?.name}`);
+    toast$("Payment status updated");
+  }
+
+  // After a tournament/season ends, reset everyone's payment status for the next season
+  function resetAllPayments(code){
+    if(!confirm("Reset ALL player payment statuses to 'No Payment Submitted'? This prepares the tournament for its next season. Historical fee records are kept.")) return;
+    saveTour(code,t=>({...t,
+      players:t.players.map(p=>({...p,paymentStatus:"none"}))
+    }),`🔄 All player payments reset for new season`);
+    toast$("All payments reset — ready for next season!");
+  }
+
+  // Generate a PayPal.me / checkout URL with tracking note
+  function buildPaypalUrl(payeeEmail,amount,note){
+    // PayPal doesn't support pre-filled "note" via simple link for all account types,
+    // but the amount + a copy-paste note covers tracking needs reliably.
+    const base=`https://www.paypal.com/cgi-bin/webscr?cmd=_xclick&business=${encodeURIComponent(payeeEmail)}&amount=${amount}&currency_code=USD&item_name=${encodeURIComponent(note)}`;
+    return base;
   }
 
   // ── REGISTRATION OPEN/CLOSE ───────────────────────────────────────────────
@@ -739,8 +769,14 @@ export default function App(){
   // ── OPEN DIVISION BRACKETS ────────────────────────────────────────────────
   function autoOpenBrackets(code){
     const tour=master.tournaments[code];if(!tour) return;
-    const classified=tour.players.filter(p=>p.classified&&!p.banned);
-    if(classified.length<2) return toast$("Not enough classified players","error");
+    const totalFee=(tour.season.adminFee||0)+(tour.season.prizeFee||0);
+    if(totalFee>0&&!tour.hostEmail?.trim()){
+      return toast$("Add your PayPal email in Admin → Season before launching a paid tournament","error");
+    }
+    // Players are eligible if classified, not banned, AND (no fee OR payment received)
+    const classified=tour.players.filter(p=>p.classified&&!p.banned&&
+      (totalFee===0||p.paymentStatus==="received"));
+    if(classified.length<2) return toast$("Not enough eligible players (check payment status)","error");
     let newTournaments={...tour.tournaments};let opened=0;
     tour.season.tiers.forEach(tier=>{
       if(newTournaments[tier.id]) return;
@@ -1205,6 +1241,11 @@ export default function App(){
 
   // ── LANDING PAGE ──────────────────────────────────────────────────────────
   if(route.type==="landing"){
+    // Calculate total prize pool across all tournaments (public info)
+    const totalPrizePools=Object.values(master.tournaments).reduce((sum,tour)=>{
+      const paidCount=(tour.feeCollected||[]).filter(f=>f.type==="prizeFee").length;
+      return sum+(paidCount*(tour.season.prizeFee||0));
+    },0);
     return(
       <div style={{minHeight:"100vh",background:`radial-gradient(ellipse at top,#1A0E00,${C.obsidian})`,
         color:C.light,fontFamily:"Georgia,serif",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"40px 20px"}}>
@@ -1212,38 +1253,55 @@ export default function App(){
         <h1 style={{color:C.gold,fontSize:28,letterSpacing:4,textTransform:"uppercase",margin:"0 0 8px",textAlign:"center"}}>
           AoE2 Tournament Agent
         </h1>
-        <p style={{color:C.dim,fontSize:14,textAlign:"center",maxWidth:500,lineHeight:1.7,marginBottom:32}}>
+        <p style={{color:C.dim,fontSize:14,textAlign:"center",maxWidth:500,lineHeight:1.7,marginBottom:24}}>
           One platform hosting AoE2 community tournaments for multiple Discord servers worldwide. Each community gets their own tournament with custom divisions, entry fees, and prize pools.
         </p>
+        {/* Host CTA */}
+        <div style={{background:C.gold+"18",border:`1px solid ${C.gold}55`,borderRadius:8,
+          padding:"14px 24px",marginBottom:28,textAlign:"center",maxWidth:480}}>
+          <div style={{color:C.gold,fontWeight:"bold",fontSize:14,marginBottom:6}}>
+            🏆 Want to host a tournament for your Discord server?
+          </div>
+          <div style={{color:C.dim,fontSize:13,lineHeight:1.6}}>
+            Contact us at{" "}
+            <a href="mailto:mlandry2011@gmail.com?subject=AOE2" style={{color:C.gold}}>
+              mlandry2011@gmail.com
+            </a>
+            {" "}with subject line <strong style={{color:C.light}}>AOE2</strong>
+          </div>
+        </div>
         <div style={{display:"flex",gap:12,flexWrap:"wrap",justifyContent:"center",marginBottom:40}}>
-          <a href="#/admin" style={{...S.btn("gold"),textDecoration:"none",display:"inline-block"}}>
+          <a href="#/admin" style={{...S.btn("stone"),textDecoration:"none",display:"inline-block",fontSize:11}}>
             ⚙️ Platform Admin
           </a>
         </div>
         {Object.keys(master.tournaments).length>0&&(
-          <div style={{width:"100%",maxWidth:700}}>
+          <div style={{width:"100%",maxWidth:760}}>
             <div style={{color:C.dim,fontSize:11,letterSpacing:2,textTransform:"uppercase",textAlign:"center",marginBottom:16}}>
               Active Tournaments
             </div>
             <div style={S.grid("1fr 1fr",12)}>
-              {Object.values(master.tournaments).map(tour=>(
-                <a key={tour.code} href={`#/t/${tour.code}`} style={{
-                  ...S.card,textDecoration:"none",color:C.light,
-                  border:`1px solid ${C.gold}44`,cursor:"pointer",
-                  transition:"border-color .2s",display:"block",marginBottom:0,
-                }}>
-                  <div style={{color:C.gold,fontSize:16,fontWeight:"bold",marginBottom:4}}>{tour.name}</div>
-                  <div style={{color:C.dim,fontSize:12,marginBottom:8}}>{tour.season.name} · {tour.hostName||"Community"}</div>
-                  <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                    <span style={S.badge(C.teal)}>⚔️ {tour.players.filter(p=>!p.banned).length} players</span>
-                    <span style={S.badge(C.gold)}>🏅 {tour.season.tiers.length} divisions</span>
-                    {(tour.season.adminFee||0)+(tour.season.prizeFee||0)>0&&(
-                      <span style={S.badge(C.moss)}>💰 ${(tour.season.adminFee||0)+(tour.season.prizeFee||0)} entry</span>
-                    )}
-                  </div>
-                  <div style={{color:C.teal,fontSize:11,marginTop:10}}>{tourUrl(tour.code)}</div>
-                </a>
-              ))}
+              {Object.values(master.tournaments).map(tour=>{
+                const tourPrizePaid=(tour.feeCollected||[]).filter(f=>f.type==="prizeFee").reduce((s,f)=>s+f.amount,0);
+                return(
+                  <a key={tour.code} href={`#/t/${tour.code}`} style={{
+                    ...S.card,textDecoration:"none",color:C.light,
+                    border:`1px solid ${C.gold}44`,cursor:"pointer",
+                    transition:"border-color .2s",display:"block",marginBottom:0,
+                  }}>
+                    <div style={{color:C.gold,fontSize:16,fontWeight:"bold",marginBottom:4}}>{tour.name}</div>
+                    <div style={{color:C.dim,fontSize:12,marginBottom:8}}>{tour.season.name} · {tour.hostName||"Community"}</div>
+                    <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                      <span style={S.badge(C.teal)}>⚔️ {tour.players.filter(p=>!p.banned).length} players</span>
+                      <span style={S.badge(C.gold)}>🏅 {tour.season.tiers.length} divisions</span>
+                      {(tour.season.prizeFee||0)>0&&(
+                        <span style={S.badge(C.moss)}>🏆 $${tourPrizePaid} prize pool</span>
+                      )}
+                    </div>
+                    <div style={{color:C.teal,fontSize:11,marginTop:10}}>{tourUrl(tour.code)}</div>
+                  </a>
+                );
+              })}
             </div>
           </div>
         )}
@@ -1267,7 +1325,7 @@ export default function App(){
           <div style={{flex:1}}>
             <div style={{fontSize:22,color:C.gold,fontWeight:"bold",letterSpacing:3}}>⚔️ PLATFORM ADMIN</div>
             <div style={{color:C.dim,fontSize:11,marginTop:2}}>
-              {Object.keys(master.tournaments).length} tournaments · ${master.totalAdminFeesCollected||0} admin fees collected
+              {Object.keys(master.tournaments).length} tournaments
             </div>
           </div>
           <a href="#/" style={{...S.btn("stone"),fontSize:11,textDecoration:"none"}}>← Back to Landing</a>
@@ -1298,19 +1356,25 @@ export default function App(){
             </div>
 
             {/* DASHBOARD */}
-            {superTab==="dashboard"&&(
+            {superTab==="dashboard"&&(()=>{
+              const totalAdminFees=Object.values(master.tournaments).reduce((s,t)=>
+                s+(t.feeCollected||[]).filter(f=>f.type==="adminFee").reduce((ss,f)=>ss+f.amount,0),0);
+              const totalPrizePools=Object.values(master.tournaments).reduce((s,t)=>
+                s+(t.feeCollected||[]).filter(f=>f.type==="prizeFee").reduce((ss,f)=>ss+f.amount,0),0);
+              return(
               <div>
-                <div style={S.grid("1fr 1fr 1fr 1fr",14)}>
+                <div style={S.grid("repeat(5,1fr)",14)}>
                   {[
                     ["🏆",Object.keys(master.tournaments).length,"Tournaments"],
                     ["👥",Object.values(master.tournaments).reduce((s,t)=>s+t.players.filter(p=>!p.banned).length,0),"Total Players"],
-                    ["💰",`$${master.totalAdminFeesCollected||0}`,"Admin Fees Collected"],
+                    ["🏆",`$${totalPrizePools}`,"Total Prize Pools"],
+                    ["💰",`$${totalAdminFees}`,"Your Profit (private)"],
                     ["⚠️",Object.values(master.tournaments).reduce((s,t)=>s+(t.placementMatches||[]).filter(m=>m.disputed&&!m.reported).length+Object.values(t.tournaments||{}).reduce((ss,b)=>ss+(b.swissRounds||[]).flatMap(r=>r).filter(m=>m.disputed&&!m.reported).length,0),0),"Open Disputes"],
                   ].map(([icon,val,label])=>(
                     <div key={label} style={{...S.card,textAlign:"center",marginBottom:0}}>
-                      <div style={{fontSize:28,marginBottom:4}}>{icon}</div>
-                      <div style={{color:C.gold,fontSize:24,fontWeight:"bold"}}>{val}</div>
-                      <div style={{color:C.dim,fontSize:11,marginTop:2}}>{label}</div>
+                      <div style={{fontSize:24,marginBottom:4}}>{icon}</div>
+                      <div style={{color:C.gold,fontSize:20,fontWeight:"bold"}}>{val}</div>
+                      <div style={{color:C.dim,fontSize:10,marginTop:2}}>{label}</div>
                     </div>
                   ))}
                 </div>
@@ -1339,7 +1403,8 @@ export default function App(){
                   ))}
                 </div>
               </div>
-            )}
+              );
+            })()}
 
             {/* TOURNAMENTS */}
             {superTab==="tournaments"&&(
@@ -1406,14 +1471,23 @@ export default function App(){
             )}
 
             {/* FEES */}
-            {superTab==="fees"&&(
+            {superTab==="fees"&&(()=>{
+              const totalAdminFees=Object.values(master.tournaments).reduce((s,t)=>
+                s+(t.feeCollected||[]).filter(f=>f.type==="adminFee").reduce((ss,f)=>ss+f.amount,0),0);
+              const totalPrizeFees=Object.values(master.tournaments).reduce((s,t)=>
+                s+(t.feeCollected||[]).filter(f=>f.type==="prizeFee").reduce((ss,f)=>ss+f.amount,0),0);
+              return(
               <div>
                 <div style={S.card}>
-                  <div style={S.cardT}>💰 Platform Admin Fee Revenue</div>
+                  <div style={S.cardT}>💰 Platform Revenue — Confidential</div>
+                  <div style={{background:C.ember+"18",border:`1px solid ${C.ember}44`,borderRadius:6,
+                    padding:"10px 14px",marginBottom:16,fontSize:12,color:C.light}}>
+                    🔒 This data is only visible behind your super admin password. Tournament admins and players never see your profit figures.
+                  </div>
                   <div style={{...S.grid("1fr 1fr 1fr",14),marginBottom:20}}>
                     {[
-                      ["Total Admin Fees Collected",`$${master.totalAdminFeesCollected||0}`,C.gold],
-                      ["Total Prize Fees Collected",`$${Object.values(master.tournaments).reduce((s,t)=>(t.feeCollected||[]).filter(f=>f.type==="prizeFee").reduce((ss,f)=>ss+f.amount,0)+s,0)}`,C.moss],
+                      ["Your Total Admin Fee Profit",`$${totalAdminFees}`,C.gold],
+                      ["Total Prize Fees (hosts' money)",`$${totalPrizeFees}`,C.moss],
                       ["Tournaments with Fees",Object.values(master.tournaments).filter(t=>(t.season.adminFee||0)>0).length,C.teal],
                     ].map(([label,val,color])=>(
                       <div key={label} style={{padding:"14px",background:C.obsidian,borderRadius:6,border:`1px solid ${color}44`}}>
@@ -1422,9 +1496,16 @@ export default function App(){
                       </div>
                     ))}
                   </div>
-                  {Object.values(master.tournaments).map(tour=>(
+                  {Object.values(master.tournaments).map(tour=>{
+                    const tourAdminTotal=(tour.feeCollected||[]).filter(f=>f.type==="adminFee").reduce((s,f)=>s+f.amount,0);
+                    const tourPrizeTotal=(tour.feeCollected||[]).filter(f=>f.type==="prizeFee").reduce((s,f)=>s+f.amount,0);
+                    return(
                     <div key={tour.code} style={{marginBottom:20}}>
-                      <div style={{color:C.gold,fontWeight:"bold",marginBottom:8}}>{tour.name} ({tour.code})</div>
+                      <div style={{...S.row(10),marginBottom:8}}>
+                        <span style={{color:C.gold,fontWeight:"bold"}}>{tour.name} ({tour.code})</span>
+                        <span style={S.badge(C.gold)}>${tourAdminTotal} your profit</span>
+                        <span style={S.badge(C.moss)}>${tourPrizeTotal} prize pool</span>
+                      </div>
                       {(tour.feeCollected||[]).length===0
                         ?<div style={{color:C.dim,fontSize:12}}>No fees collected yet</div>
                         :(tour.feeCollected||[]).map(f=>(
@@ -1433,17 +1514,19 @@ export default function App(){
                             <span style={S.badge(f.type==="adminFee"?C.gold:C.moss)}>
                               {f.type==="adminFee"?"Admin Fee":"Prize Fee"}
                             </span>
-                            <span style={{flex:1,fontSize:12}}>{f.name}</span>
+                            <span style={{flex:1,fontSize:12}}>{f.name} {f.discord?`(${f.discord})`:""}</span>
                             <span style={{color:C.gold,fontWeight:"bold"}}>${f.amount}</span>
                             <span style={{color:C.dim,fontSize:11}}>{new Date(f.paidAt).toLocaleDateString()}</span>
                           </div>
                         ))
                       }
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
-            )}
+              );
+            })()}
 
             {/* SETTINGS */}
             {superTab==="settings"&&(
@@ -1676,7 +1759,10 @@ export default function App(){
       <div style={{maxWidth:1100,margin:"0 auto",padding:"24px 14px"}}>
 
         {/* ── HOME ────────────────────────────────────────────────────────── */}
-        {tab==="home"&&(
+        {tab==="home"&&(()=>{
+          const totalFee=(T.season.adminFee||0)+(T.season.prizeFee||0);
+          const totalPrizePool=T.players.filter(p=>p.paymentStatus==="received"&&!p.banned).length*(T.season.prizeFee||0);
+          return(
           <div>
             <div style={{...S.card,textAlign:"center",border:`2px solid ${C.gold}44`}}>
               <div style={{fontSize:48,marginBottom:8}}>⚔️</div>
@@ -1684,10 +1770,14 @@ export default function App(){
               <p style={{color:C.dim,fontSize:13,maxWidth:500,margin:"0 auto 16px",lineHeight:1.7}}>
                 {T.season.name} · Hosted by {T.hostName||"Community"}
               </p>
-              {(T.season.adminFee||0)+(T.season.prizeFee||0)>0&&(
-                <div style={{...S.badge(C.gold),fontSize:13,padding:"6px 16px",margin:"0 auto 16px"}}>
-                  💰 Entry Fee: ${(T.season.adminFee||0)+(T.season.prizeFee||0)} total
-                  <span style={{color:C.dim,fontSize:11,marginLeft:8}}>(${T.season.adminFee} admin + ${T.season.prizeFee} prize pool)</span>
+              {totalFee>0&&(
+                <div style={{...S.badge(C.gold),fontSize:13,padding:"6px 16px",margin:"0 auto 10px"}}>
+                  💰 Entry Fee: ${totalFee}
+                </div>
+              )}
+              {totalPrizePool>0&&(
+                <div style={{...S.badge(C.moss),fontSize:14,padding:"8px 18px",margin:"0 auto 16px"}}>
+                  🏆 Live Prize Pool: ${totalPrizePool}
                 </div>
               )}
               <div style={{...S.row(12,"center"),flexWrap:"wrap"}}>
@@ -1699,16 +1789,25 @@ export default function App(){
             <div style={S.card}>
               <div style={S.cardT}>🏅 Divisions</div>
               <div style={S.grid("repeat(2,1fr)",12)}>
-                {T.season.tiers.map(t=>(
-                  <div key={t.id} style={{padding:"14px",borderRadius:6,background:t.color+"18",border:`1px solid ${t.color}44`}}>
-                    <div style={{fontSize:26,marginBottom:4}}>{t.icon}</div>
-                    <div style={{color:t.color,fontWeight:"bold",fontSize:15}}>{t.name}</div>
-                    <div style={{color:C.dim,fontSize:12,marginTop:2}}>{t.min}–{t.max===9999?"∞":t.max} ELO</div>
-                    <div style={{color:C.light,fontSize:12,marginTop:6,fontWeight:"bold"}}>
-                      {T.players.filter(p=>p.classified&&p.tierId===t.id&&!p.banned).length} classified
+                {T.season.tiers.map(t=>{
+                  const tierPaid=T.players.filter(p=>p.tierId===t.id&&p.paymentStatus==="received"&&!p.banned).length;
+                  const tierPrize=tierPaid*(T.season.prizeFee||0);
+                  return(
+                    <div key={t.id} style={{padding:"14px",borderRadius:6,background:t.color+"18",border:`1px solid ${t.color}44`}}>
+                      <div style={{fontSize:26,marginBottom:4}}>{t.icon}</div>
+                      <div style={{color:t.color,fontWeight:"bold",fontSize:15}}>{t.name}</div>
+                      <div style={{color:C.dim,fontSize:12,marginTop:2}}>{t.min}–{t.max===9999?"∞":t.max} ELO</div>
+                      <div style={{color:C.light,fontSize:12,marginTop:6,fontWeight:"bold"}}>
+                        {T.players.filter(p=>p.classified&&p.tierId===t.id&&!p.banned).length} classified
+                      </div>
+                      {tierPrize>0&&(
+                        <div style={{color:C.moss,fontSize:13,marginTop:4,fontWeight:"bold"}}>
+                          🏆 ${tierPrize} prize pool
+                        </div>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
               <div style={{marginTop:14,padding:"12px",background:C.obsidian+"88",borderRadius:6,fontSize:12,color:C.dim,lineHeight:1.7}}>
                 <strong style={{color:C.light}}>How it works:</strong> Register → play {T.season.placementGames} auto-scheduled placement games → get assigned to your division → vote on settings → {T.season.swissRounds}-round Swiss → Top {T.season.top8Cut} playoff.
@@ -1737,7 +1836,8 @@ export default function App(){
               </div>
             )}
           </div>
-        )}
+          );
+        })()}
 
         {/* ── REGISTER ────────────────────────────────────────────────────── */}
         {tab==="register"&&(
@@ -2179,7 +2279,7 @@ export default function App(){
               <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
                 {[["season","⚙️ Season"],["windows","📅 Time Windows"],["placement","🎮 Placement"],
                   ["tiers","🏅 Tiers"],["players","👥 Players"],["payments","💰 Payments"],
-                  ["reports","🚨 Reports"],["passwords","🔑 Passwords"],["danger","⚠️ Data"]
+                  ["reports","🚨 Reports"],["passwords","🔑 Passwords"],["guide","📖 Guide"],["danger","⚠️ Data"]
                 ].map(([k,l])=>(
                   <button key={k} style={S.btn(tAdminTab===k?"gold":"stone")} onClick={()=>setTAdminTab(k)}>{l}</button>
                 ))}
@@ -2191,6 +2291,26 @@ export default function App(){
             {tAdminTab==="season"&&(
               <div style={S.card}>
                 <div style={S.cardT}>⚙️ Season Settings</div>
+
+                {/* PayPal email — REQUIRED before launching a paid tournament */}
+                <div style={{background:T.hostEmail?.trim()?C.moss+"18":C.ember+"18",
+                  border:`1px solid ${T.hostEmail?.trim()?C.moss:C.ember}55`,borderRadius:6,
+                  padding:"14px",marginBottom:16}}>
+                  <label style={S.lbl}>Your PayPal Email — Required to receive prize fees</label>
+                  <input style={S.inp} type="email" placeholder="your-paypal@email.com"
+                    value={T.hostEmail||""}
+                    onChange={e=>saveTour(T.code,t=>({...t,hostEmail:e.target.value}))}/>
+                  {!T.hostEmail?.trim()?(
+                    <div style={{color:C.ember,fontSize:11,marginTop:6}}>
+                      ⚠️ Required before you can open division brackets for a paid tournament. Players send your prize fee share directly to this PayPal address.
+                    </div>
+                  ):(
+                    <div style={{color:C.moss,fontSize:11,marginTop:6}}>
+                      ✓ Prize fees will be sent to this PayPal address by players.
+                    </div>
+                  )}
+                </div>
+
                 <div style={S.grid("1fr 1fr",14)}>
                   {[
                     ["Season Name","name","text",T.season.name],
@@ -2212,9 +2332,17 @@ export default function App(){
                     </div>
                     <div style={{color:C.dim,fontSize:10,marginTop:3}}>Contact the platform organiser to change this amount.</div>
                   </div>
-                  <div style={{gridColumn:"1/-1"}}><label style={S.lbl}>Payment Instructions (public)</label>
-                    <input style={S.inp} placeholder="e.g. Interac e-Transfer to host@email.com" value={T.season.paymentInfo||""}
+                  <div style={{gridColumn:"1/-1"}}><label style={S.lbl}>Additional Payment Notes (public, optional)</label>
+                    <input style={S.inp} placeholder="e.g. Include your Discord tag in the PayPal note" value={T.season.paymentInfo||""}
                       onChange={e=>saveTour(T.code,t=>({...t,season:{...t.season,paymentInfo:e.target.value}}))}/></div>
+                </div>
+                <div style={{marginTop:16}}>
+                  <button style={S.btn("ember")} onClick={()=>resetAllPayments(T.code)}>
+                    🔄 Reset All Payments for Next Season
+                  </button>
+                  <div style={{color:C.dim,fontSize:10,marginTop:4}}>
+                    Use this after a tournament ends to prepare for the next season. Historical fee records are kept.
+                  </div>
                 </div>
                 <div style={{marginTop:20,paddingTop:16,borderTop:`1px solid ${C.stone}`}}>
                   <div style={{color:C.gold,fontSize:13,fontWeight:"bold",letterSpacing:1,textTransform:"uppercase",marginBottom:12}}>🚦 Registration Controls</div>
@@ -2340,8 +2468,17 @@ export default function App(){
             {/* TIERS */}
             {tAdminTab==="tiers"&&(
               <div style={S.card}>
-                <div style={S.cardT}>🏅 Division Configuration</div>
-                {T.season.tiers.map((tier)=>(
+                <div style={S.cardT}>🏅 Division Configuration & Prize Splits</div>
+                <p style={{color:C.dim,fontSize:12,marginBottom:16,lineHeight:1.6}}>
+                  Set the cash prize percentage for 1st, 2nd, and 3rd place in each division. Percentages should total 100%.
+                  The live prize pool shown updates automatically as more players' payments are confirmed received.
+                </p>
+                {T.season.tiers.map((tier)=>{
+                  const paidInTier=T.players.filter(p=>p.tierId===tier.id&&p.paymentStatus==="received"&&!p.banned).length;
+                  const tierPrizePool=paidInTier*(T.season.prizeFee||0);
+                  const split=tier.prizeSplit||{first:60,second:25,third:15};
+                  const splitTotal=(split.first||0)+(split.second||0)+(split.third||0);
+                  return(
                   <div key={tier.id} style={{padding:"14px",borderRadius:6,background:C.obsidian,border:`1px solid ${tier.color}55`,marginBottom:10}}>
                     <div style={S.grid("1fr 1fr 1fr 1fr auto",10)}>
                       {[["Name","name","text"],["Min ELO","min","number"],["Max ELO (blank=∞)","max","number"],["Icon","icon","text"]].map(([lbl,field,type])=>(
@@ -2359,11 +2496,39 @@ export default function App(){
                         saveTour(T.code,t=>({...t,season:{...t.season,tiers:t.season.tiers.filter(x=>x.id!==tier.id)}}));
                       }}>✕</button>
                     </div>
+
+                    {/* Prize split + live pool */}
+                    <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${C.stone}`}}>
+                      <div style={{...S.row(10),flexWrap:"wrap",marginBottom:8}}>
+                        <span style={{color:C.gold,fontSize:12,fontWeight:"bold"}}>🏆 Live Prize Pool:</span>
+                        <span style={{color:C.moss,fontSize:16,fontWeight:"bold"}}>${tierPrizePool}</span>
+                        <span style={{color:C.dim,fontSize:11}}>({paidInTier} paid player{paidInTier!==1?"s":""} × ${T.season.prizeFee||0})</span>
+                      </div>
+                      <div style={S.grid("1fr 1fr 1fr",10)}>
+                        {[["first","🥇 1st Place %"],["second","🥈 2nd Place %"],["third","🥉 3rd Place %"]].map(([key,label])=>(
+                          <div key={key}>
+                            <label style={S.lbl}>{label}</label>
+                            <input style={S.inp} type="number" min={0} max={100} value={split[key]||0}
+                              onChange={e=>{
+                                const newSplit={...split,[key]:Number(e.target.value)};
+                                saveTour(T.code,t=>({...t,season:{...t.season,tiers:t.season.tiers.map(x=>x.id!==tier.id?x:{...x,prizeSplit:newSplit})}}));
+                              }}/>
+                            <div style={{color:C.dim,fontSize:10,marginTop:3}}>
+                              ${Math.round(tierPrizePool*(split[key]||0)/100)}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <div style={{color:splitTotal===100?C.moss:C.ember,fontSize:11,marginTop:6}}>
+                        {splitTotal===100?"✓":"⚠️"} Total: {splitTotal}% {splitTotal!==100&&"(should equal 100%)"}
+                      </div>
+                    </div>
                   </div>
-                ))}
+                  );
+                })}
                 <button style={S.btn("gold")} onClick={()=>{
                   const last=T.season.tiers[T.season.tiers.length-1];
-                  const newT={id:uid(),name:"New Division",min:(last?.max||999)+1,max:9999,color:C.steel,icon:"🎯"};
+                  const newT={id:uid(),name:"New Division",min:(last?.max||999)+1,max:9999,color:C.steel,icon:"🎯",prizeSplit:{first:60,second:25,third:15}};
                   saveTour(T.code,t=>({...t,season:{...t.season,tiers:[...t.season.tiers.map(x=>x.max===9999?{...x,max:newT.min-1}:x),newT]}}));
                 }}>+ Add Division</button>
               </div>
@@ -2407,36 +2572,78 @@ export default function App(){
             )}
 
             {/* PAYMENTS */}
-            {tAdminTab==="payments"&&(
+            {tAdminTab==="payments"&&(()=>{
+              const totalFee=(T.season.adminFee||0)+(T.season.prizeFee||0);
+              const eligible=T.players.filter(p=>!p.banned&&totalFee>0);
+              const noneCount=eligible.filter(p=>p.paymentStatus==="none"||!p.paymentStatus).length;
+              const submittedCount=eligible.filter(p=>p.paymentStatus==="submitted").length;
+              const receivedCount=eligible.filter(p=>p.paymentStatus==="received").length;
+              const totalPrizeCollected=(T.feeCollected||[]).filter(f=>f.type==="prizeFee"&&f.seasonName===T.season.name).reduce((s,f)=>s+f.amount,0);
+              return(
               <div style={S.card}>
                 <div style={S.cardT}>💰 Payment Tracking
                   <span style={{...S.badge(C.gold),marginLeft:10,fontSize:11}}>
-                    ${(T.feeCollected||[]).filter(f=>f.type==="prizeFee").reduce((s,f)=>s+f.amount,0)} prize fees collected
+                    ${totalPrizeCollected} prize pool collected this season
                   </span>
                 </div>
-                {/* Info banner explaining the fee split */}
-                <div style={{background:C.steel+"18",border:`1px solid ${C.steel}44`,borderRadius:6,
-                  padding:"10px 14px",marginBottom:14,fontSize:12,color:C.light,lineHeight:1.6}}>
-                  <strong style={{color:C.gold}}>Fee responsibilities:</strong><br/>
-                  You (server host) collect and track the <strong>Prize Pool Fee (${T.season.prizeFee||0}/player)</strong> here.<br/>
-                  The platform admin fee (${T.season.adminFee||0}/player) is tracked separately by the platform organiser — they will contact you about it.
+                {/* Status summary */}
+                <div style={S.grid("1fr 1fr 1fr",10)}>
+                  <div style={{padding:"10px",background:C.ember+"18",border:`1px solid ${C.ember}44`,borderRadius:6,textAlign:"center"}}>
+                    <div style={{color:C.ember,fontSize:22,fontWeight:"bold"}}>{noneCount}</div>
+                    <div style={{color:C.dim,fontSize:11}}>No Payment Submitted</div>
+                  </div>
+                  <div style={{padding:"10px",background:C.gold+"18",border:`1px solid ${C.gold}44`,borderRadius:6,textAlign:"center"}}>
+                    <div style={{color:C.gold,fontSize:22,fontWeight:"bold"}}>{submittedCount}</div>
+                    <div style={{color:C.dim,fontSize:11}}>Submitted — Awaiting Confirmation</div>
+                  </div>
+                  <div style={{padding:"10px",background:C.moss+"18",border:`1px solid ${C.moss}44`,borderRadius:6,textAlign:"center"}}>
+                    <div style={{color:C.moss,fontSize:22,fontWeight:"bold"}}>{receivedCount}</div>
+                    <div style={{color:C.dim,fontSize:11}}>Received — Can Play</div>
+                  </div>
                 </div>
-                {(T.season.prizeFee||0)===0&&<p style={{color:C.dim}}>Prize fee is set to $0. Update in Admin → Season to track payments.</p>}
-                {T.players.filter(p=>p.classified&&!p.banned).map(p=>{
+
+                <div style={{background:C.steel+"18",border:`1px solid ${C.steel}44`,borderRadius:6,
+                  padding:"10px 14px",margin:"16px 0",fontSize:12,color:C.light,lineHeight:1.6}}>
+                  <strong style={{color:C.gold}}>How payments work:</strong><br/>
+                  Players pay via PayPal — admin fee to the platform, prize fee to your PayPal email — then click "I've Paid" themselves.
+                  When you confirm receipt in your PayPal account, click <strong>Confirm Received</strong> below to unlock their tournament access.
+                  Only "Received" players can play in paid tournament brackets. Placement games remain free for everyone.
+                </div>
+
+                {totalFee===0&&<p style={{color:C.dim}}>This tournament has no entry fee — all classified players can play for free.</p>}
+
+                {totalFee>0&&eligible.map(p=>{
+                  const status=p.paymentStatus||"none";
+                  const statusColor=status==="received"?C.moss:status==="submitted"?C.gold:C.ember;
                   return(<div key={p.id} style={{...S.row(10),padding:"10px 12px",borderRadius:6,
-                    background:p.prizeFeePaid?C.moss+"18":C.ember+"18",
-                    border:`1px solid ${p.prizeFeePaid?C.moss:C.ember}44`,marginBottom:8,flexWrap:"wrap"}}>
-                    <div style={{flex:1}}>
+                    background:statusColor+"18",border:`1px solid ${statusColor}44`,marginBottom:8,flexWrap:"wrap"}}>
+                    <div style={{flex:1,minWidth:180}}>
                       <div style={{fontWeight:"bold",fontSize:13}}>{p.name}</div>
                       <div style={{color:C.dim,fontSize:11}}>{p.email} · {p.discord}</div>
                     </div>
-                    <button style={S.btn(p.prizeFeePaid?"stone":"gold")} onClick={()=>markFeePaid(T.code,p.id,"prizeFee")}>
-                      {p.prizeFeePaid?`✓ Prize $${T.season.prizeFee} received`:`Mark Prize Fee $${T.season.prizeFee||0} Received`}
-                    </button>
+                    <span style={S.badge(statusColor)}>
+                      {status==="received"?"✓ Received":status==="submitted"?"⏳ Submitted":"✕ No Payment"}
+                    </span>
+                    {status==="submitted"&&(
+                      <button style={S.btn("gold")} onClick={()=>adminConfirmPaymentReceived(T.code,p.id)}>
+                        ✓ Confirm Received
+                      </button>
+                    )}
+                    {status==="received"&&(
+                      <button style={{...S.btn("stone"),fontSize:10,padding:"5px 10px"}} onClick={()=>adminRevertPayment(T.code,p.id,"submitted")}>
+                        Revert to Submitted
+                      </button>
+                    )}
+                    {status==="none"&&(
+                      <button style={{...S.btn("stone"),fontSize:10,padding:"5px 10px"}} onClick={()=>adminConfirmPaymentReceived(T.code,p.id)}>
+                        Mark Received Manually
+                      </button>
+                    )}
                   </div>);
                 })}
               </div>
-            )}
+              );
+            })()}
 
             {/* REPORTS */}
             {tAdminTab==="reports"&&(
@@ -2490,6 +2697,38 @@ export default function App(){
                       })}>🔑 Reset</button>
                   </div>
                 ))}
+              </div>
+            )}
+
+            {/* GUIDE */}
+            {tAdminTab==="guide"&&(
+              <div style={S.card}>
+                <div style={S.cardT}>📖 Admin Guides</div>
+                <p style={{color:C.dim,fontSize:13,marginBottom:16,lineHeight:1.7}}>
+                  Step-by-step PDF guides covering everything from setup to running a full season — registration, time windows, placement matches, settings voting, Swiss rounds, PayPal payments, prize splits, and disputes.
+                </p>
+                <div style={S.grid("1fr 1fr",14)}>
+                  <div style={{padding:"16px",background:C.obsidian,borderRadius:6,border:`1px solid ${C.gold}44`}}>
+                    <div style={{fontSize:28,marginBottom:8}}>📗</div>
+                    <div style={{color:C.gold,fontWeight:"bold",fontSize:14,marginBottom:6}}>Discord Server Admin Guide</div>
+                    <div style={{color:C.dim,fontSize:12,marginBottom:12,lineHeight:1.6}}>
+                      For you — the tournament host. Covers season setup, PayPal/prize configuration, running every phase, and distributing prizes.
+                    </div>
+                    <a href="/AoE2-Guide-ServerAdmin.pdf" download style={{...S.btn("gold"),display:"inline-block",textDecoration:"none"}}>
+                      ⬇️ Download PDF
+                    </a>
+                  </div>
+                  <div style={{padding:"16px",background:C.obsidian,borderRadius:6,border:`1px solid ${C.steel}44`}}>
+                    <div style={{fontSize:28,marginBottom:8}}>📘</div>
+                    <div style={{color:C.steel,fontWeight:"bold",fontSize:14,marginBottom:6}}>Platform Organiser Guide</div>
+                    <div style={{color:C.dim,fontSize:12,marginBottom:12,lineHeight:1.6}}>
+                      Background reference covering the full platform — hosting, creating tournaments, and the multi-server admin fee model.
+                    </div>
+                    <a href="/AoE2-Guide-Organiser.pdf" download style={{...S.btn("steel"),display:"inline-block",textDecoration:"none"}}>
+                      ⬇️ Download PDF
+                    </a>
+                  </div>
+                </div>
               </div>
             )}
 
@@ -2589,20 +2828,76 @@ export default function App(){
                       <div style={{textAlign:"right"}}>
                         <span style={S.badge(tierData?.color||C.gold)}>{tierData?.icon} {tierData?.name||"Unclassified"}</span>
                         {!p.classified&&<div style={{color:C.dim,fontSize:11,marginTop:8}}>{p.placementsDone}/{p.placementsNeeded} placements</div>}
-                        {totalFee>0&&(
-                          <div style={{marginTop:8,display:"flex",gap:4,flexDirection:"column"}}>
-                            <span style={S.badge((p.adminFeePaid&&p.prizeFeePaid)?C.moss:C.ember)}>
-                              {(p.adminFeePaid&&p.prizeFeePaid)
-                                ?`✓ Entry Fee Paid ($${totalFee})`
-                                :`⏳ Entry Fee $${totalFee} — contact organiser`}
-                            </span>
-                          </div>
-                        )}
+                        {totalFee>0&&(()=>{
+                          const status=p.paymentStatus||"none";
+                          const sc=status==="received"?C.moss:status==="submitted"?C.gold:C.ember;
+                          const label=status==="received"?`✓ Payment Received ($${totalFee})`:
+                            status==="submitted"?`⏳ Payment Submitted — Awaiting Confirmation`:
+                            `✕ Payment Required ($${totalFee})`;
+                          return(
+                            <div style={{marginTop:8}}>
+                              <span style={S.badge(sc)}>{label}</span>
+                            </div>
+                          );
+                        })()}
                       </div>
                     </div>
                   </div>
 
-                  {/* Placement matches */}
+                  {/* PAYMENT SECTION — shown if there's a fee and player hasn't fully paid */}
+                  {totalFee>0&&p.paymentStatus!=="received"&&(()=>{
+                    const note=`${p.email} | ${T.name} | ${p.discord}`;
+                    const adminPaypalUrl=buildPaypalUrl("mlandry2011@gmail.com",T.season.adminFee||0,`Admin Fee - ${note}`);
+                    const prizePaypalUrl=T.hostEmail?buildPaypalUrl(T.hostEmail,T.season.prizeFee||0,`Prize Fee - ${note}`):null;
+                    return(
+                      <div style={{...S.card,border:`1px solid ${C.gold}55`}}>
+                        <div style={S.cardT}>💳 Pay Your Entry Fee</div>
+                        <p style={{color:C.dim,fontSize:13,marginBottom:14,lineHeight:1.7}}>
+                          Your entry fee is split into two PayPal payments. Send both, then click "I've Paid Both Fees" below.
+                          The organiser will confirm receipt and unlock your tournament access.
+                        </p>
+                        <div style={S.grid("1fr 1fr",12)}>
+                          <div style={{padding:"14px",background:C.obsidian,borderRadius:6,border:`1px solid ${C.stone}`}}>
+                            <div style={{color:C.gold,fontWeight:"bold",fontSize:13,marginBottom:6}}>1. Platform Admin Fee</div>
+                            <div style={{color:C.light,fontSize:18,fontWeight:"bold",marginBottom:8}}>${T.season.adminFee||0}</div>
+                            <a href={adminPaypalUrl} target="_blank" rel="noopener noreferrer"
+                              style={{...S.btn("gold"),display:"inline-block",textDecoration:"none",fontSize:11,padding:"8px 14px"}}>
+                              Pay via PayPal →
+                            </a>
+                          </div>
+                          <div style={{padding:"14px",background:C.obsidian,borderRadius:6,border:`1px solid ${C.stone}`}}>
+                            <div style={{color:C.moss,fontWeight:"bold",fontSize:13,marginBottom:6}}>2. Prize Pool Fee</div>
+                            <div style={{color:C.light,fontSize:18,fontWeight:"bold",marginBottom:8}}>${T.season.prizeFee||0}</div>
+                            {prizePaypalUrl?(
+                              <a href={prizePaypalUrl} target="_blank" rel="noopener noreferrer"
+                                style={{...S.btn("green"),display:"inline-block",textDecoration:"none",fontSize:11,padding:"8px 14px"}}>
+                                Pay via PayPal →
+                              </a>
+                            ):(
+                              <div style={{color:C.ember,fontSize:11}}>Organiser hasn't set up PayPal yet — contact them directly.</div>
+                            )}
+                          </div>
+                        </div>
+                        <div style={{marginTop:12,padding:"10px 12px",background:C.steel+"18",borderRadius:6,fontSize:11,color:C.dim,lineHeight:1.6}}>
+                          <strong style={{color:C.light}}>Payment note (auto-included):</strong> {note}
+                          <br/>This helps the organiser match your payment to your account.
+                        </div>
+                        {T.season.paymentInfo&&(
+                          <div style={{marginTop:8,color:C.dim,fontSize:12}}>📋 {T.season.paymentInfo}</div>
+                        )}
+                        {(p.paymentStatus||"none")==="none"&&(
+                          <button style={{...S.btn("gold"),marginTop:14}} onClick={()=>playerSubmitPayment(T.code,p.id)}>
+                            ✓ I've Paid Both Fees
+                          </button>
+                        )}
+                        {p.paymentStatus==="submitted"&&(
+                          <div style={{marginTop:14,...S.badge(C.gold),display:"inline-block",padding:"8px 16px"}}>
+                            ⏳ Waiting for organiser to confirm receipt
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                   {!p.classified&&(
                     <div style={S.card}>
                       <div style={S.cardT}>🎮 Placement Matches
@@ -2819,24 +3114,45 @@ export default function App(){
 
               {/* PROFILE */}
               {portalTab==="profile"&&(
-                <div style={S.card}>
-                  <div style={S.cardT}>👤 My Profile</div>
-                  <div style={S.grid("1fr 1fr",14)}>
-                    {[["Name",p.name],["Discord",p.discord],["Email",p.email],
-                      ["Timezone",TIMEZONES.find(t=>t.value===p.timezone)?.label||p.timezone],
-                      ["Favourite Civ",p.civ],["Current ELO",p.elo],
-                      ["Division",`${tierData?.icon||""} ${tierData?.name||"Unclassified"}`],
-                      ["Swiss Record",`${p.swissWins||0}W–${p.swissLosses||0}L`],
-                      ["All-time W/L",`${p.wins}W–${p.losses}L`],
-                      ["Placements",`${p.placementsDone}/${p.placementsNeeded}${p.classified?" ✅":""}`],
-                    ].map(([label,value])=>(
-                      <div key={label} style={{padding:"12px",background:C.obsidian,borderRadius:6,border:`1px solid ${C.stone}`}}>
-                        <div style={{color:C.dim,fontSize:10,letterSpacing:1,textTransform:"uppercase",marginBottom:4}}>{label}</div>
-                        <div style={{fontSize:14,fontWeight:"bold"}}>{value}</div>
-                      </div>
-                    ))}
+                <div>
+                  <div style={S.card}>
+                    <div style={S.cardT}>👤 My Profile</div>
+                    <div style={S.grid("1fr 1fr",14)}>
+                      {[["Name",p.name],["Discord",p.discord],["Email",p.email],
+                        ["Timezone",TIMEZONES.find(t=>t.value===p.timezone)?.label||p.timezone],
+                        ["Favourite Civ",p.civ],["Current ELO",p.elo],
+                        ["Division",`${tierData?.icon||""} ${tierData?.name||"Unclassified"}`],
+                        ["Swiss Record",`${p.swissWins||0}W–${p.swissLosses||0}L`],
+                        ["All-time W/L",`${p.wins}W–${p.losses}L`],
+                        ["Placements",`${p.placementsDone}/${p.placementsNeeded}${p.classified?" ✅":""}`],
+                        ...(totalFee>0?[["Payment Status",
+                          p.paymentStatus==="received"?"✅ Received":
+                          p.paymentStatus==="submitted"?"⏳ Submitted":"❌ No Payment Submitted"]]:[]),
+                      ].map(([label,value])=>(
+                        <div key={label} style={{padding:"12px",background:C.obsidian,borderRadius:6,border:`1px solid ${C.stone}`}}>
+                          <div style={{color:C.dim,fontSize:10,letterSpacing:1,textTransform:"uppercase",marginBottom:4}}>{label}</div>
+                          <div style={{fontSize:14,fontWeight:"bold"}}>{value}</div>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{marginTop:20}}><button style={S.btn("red")} onClick={logoutPlayer}>🚪 Log Out</button></div>
                   </div>
-                  <div style={{marginTop:20}}><button style={S.btn("red")} onClick={logoutPlayer}>🚪 Log Out</button></div>
+
+                  {/* Player guide download */}
+                  <div style={{...S.card,border:`1px solid ${C.gold}44`}}>
+                    <div style={S.cardT}>📖 Player Guide</div>
+                    <div style={S.row(14,"flex-start")}>
+                      <div style={{fontSize:32}}>📘</div>
+                      <div style={{flex:1}}>
+                        <div style={{color:C.light,fontSize:13,lineHeight:1.6,marginBottom:10}}>
+                          A complete step-by-step guide covering registration, placement matches, setting up game lobbies, reporting results, voting on settings, the Swiss bracket, Top 8 playoff, and how to pay your entry fee via PayPal.
+                        </div>
+                        <a href="/AoE2-Guide-Player.pdf" download style={{...S.btn("gold"),display:"inline-block",textDecoration:"none"}}>
+                          ⬇️ Download Player Guide (PDF)
+                        </a>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
