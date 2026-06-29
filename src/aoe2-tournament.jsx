@@ -31,10 +31,13 @@ const RESOURCES  = ["Standard","High Resources","Ultra High Resources","Low Reso
 const SPEEDS     = ["Normal","Fast","Fastest"];
 const GAME_MODES = ["Random Map","Death Match","Regicide","King of the Hill","Wonder Race"];
 const MAP_SIZES  = ["Tiny (2p)","Small (3p)","Medium (4p)","Normal (6p)","Large (8p)","Gigantic"];
-const CIVS = ["Any (Random)","Aztecs","Berbers","Britons","Byzantines","Celts","Chinese",
-  "Cumans","Ethiopians","Franks","Goths","Huns","Incas","Indians","Italians","Japanese",
-  "Khmer","Koreans","Lithuanians","Magyars","Malay","Malians","Mayans","Mongols","Persians",
-  "Portuguese","Saracens","Slavs","Spanish","Tatars","Teutons","Turks","Vietnamese","Vikings"];
+const CIVS = ["Any (Random)","Armenians","Aztecs","Bengalis","Berbers","Bohemians","Britons",
+  "Bulgarians","Burgundians","Burmese","Byzantines","Celts","Chinese","Cumans","Dravidians",
+  "Ethiopians","Franks","Georgians","Goths","Gurjaras","Hindustanis","Huns","Incas","Italians",
+  "Japanese","Jurchens","Khitans","Khmer","Koreans","Lithuanians","Magyars","Malay","Malians",
+  "Mapuche","Mayans","Mongols","Muisca","Persians","Poles","Portuguese","Romans","Saracens",
+  "Shu","Sicilians","Slavs","Spanish","Tatars","Teutons","Turks","Tupi","Vietnamese","Vikings",
+  "Wei","Wu"];
 
 const STORAGE_KEY    = "aoe2_v5_master";
 const SUPER_PW_KEY   = "aoe2_v5_superpw";
