@@ -2362,7 +2362,7 @@ export default function App(){
       <div style={{display:"flex",background:C.parch,borderBottom:`1px solid ${C.stone}`,overflowX:"auto"}}>
         {[["home","🏰 Home"],["register","📋 Register"],["tiers","🏆 Divisions"],
           ["bracket","📊 Bracket"],["schedule","📅 Schedule"],["discord","💬 Discord"],
-          ["tadmin","⚙️ Admin"],["log","📜 Log"],
+          ["tadmin","⚙️ Admin"],
           ...(loggedInPlayer?[["portal","🎮 My Portal"]]:
               [["login","🔑 Login"]])
         ].map(([k,l])=>(
@@ -2940,7 +2940,8 @@ export default function App(){
               <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
                 {[["season","⚙️ Season"],["windows","📅 Time Windows"],["placement","🎮 Placement"],
                   ["tiers","🏅 Tiers"],["players","👥 Players"],["payments","💰 Payments"],
-                  ["reports","🚨 Reports"],["passwords","🔑 Passwords"],["guide","📖 Guide"],["danger","⚠️ Data"]
+                  ["reports","🚨 Reports"],["passwords","🔑 Passwords"],["guide","📖 Guide"],
+                  ["log","📜 Log"],["danger","⚠️ Data"]
                 ].map(([k,l])=>(
                   <button key={k} style={S.btn(tAdminTab===k?"gold":"stone")} onClick={()=>setTAdminTab(k)}>{l}</button>
                 ))}
@@ -3471,6 +3472,20 @@ export default function App(){
               </div>
             )}
 
+            {/* LOG — moved here from the public nav so only the admin can view/clear it */}
+            {tAdminTab==="log"&&(
+              <div style={S.card}>
+                <div style={{...S.row(0,"center"),marginBottom:14}}>
+                  <div style={{...S.cardT,flex:1,marginBottom:0}}>📜 Activity Log</div>
+                  <button style={S.btn("red")} onClick={()=>saveTour(T.code,t=>({...t,log:[]}))}>Clear</button>
+                </div>
+                {!(T.log||[]).length&&<p style={{color:C.dim}}>No activity yet.</p>}
+                {(T.log||[]).map((e,i)=>(
+                  <div key={i} style={{padding:"7px 10px",fontSize:12,borderBottom:`1px solid ${C.stone}22`,color:i===0?C.light:C.dim}}>{e}</div>
+                ))}
+              </div>
+            )}
+
             {/* DANGER */}
             {tAdminTab==="danger"&&(
               <div style={S.card}>
@@ -3499,20 +3514,6 @@ export default function App(){
                 </div>
               </div>
             )}
-          </div>
-        )}
-
-        {/* ── TOURNAMENT LOG ──────────────────────────────────────────────── */}
-        {tab==="log"&&(
-          <div style={S.card}>
-            <div style={{...S.row(0,"center"),marginBottom:14}}>
-              <div style={{...S.cardT,flex:1,marginBottom:0}}>📜 Activity Log</div>
-              <button style={S.btn("red")} onClick={()=>saveTour(T.code,t=>({...t,log:[]}))}>Clear</button>
-            </div>
-            {!(T.log||[]).length&&<p style={{color:C.dim}}>No activity yet.</p>}
-            {(T.log||[]).map((e,i)=>(
-              <div key={i} style={{padding:"7px 10px",fontSize:12,borderBottom:`1px solid ${C.stone}22`,color:i===0?C.light:C.dim}}>{e}</div>
-            ))}
           </div>
         )}
 
