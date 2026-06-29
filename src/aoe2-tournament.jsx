@@ -3432,6 +3432,22 @@ export default function App(){
 
           return(
             <div>
+              {/* Player guide download — always visible above the portal nav */}
+              <div style={{...S.card,border:`1px solid ${C.gold}44`}}>
+                <div style={S.cardT}>📖 Player Guide</div>
+                <div style={S.row(14,"flex-start")}>
+                  <div style={{fontSize:32}}>📘</div>
+                  <div style={{flex:1}}>
+                    <div style={{color:C.light,fontSize:13,lineHeight:1.6,marginBottom:10}}>
+                      A complete step-by-step guide covering registration, placement matches, setting up game lobbies, reporting results, voting on settings, the Swiss bracket, Top 8 playoff, and how to pay your entry fee via PayPal.
+                    </div>
+                    <a href="/AoE2-Guide-Player.pdf" download style={{...S.btn("gold"),display:"inline-block",textDecoration:"none"}}>
+                      ⬇️ Download Player Guide (PDF)
+                    </a>
+                  </div>
+                </div>
+              </div>
+
               <div style={{display:"flex",gap:8,marginBottom:18,flexWrap:"wrap"}}>
                 {[["dashboard","🏠 Dashboard"],["matches","⚔️ Matches"],["standings","📊 Standings"],["profile","👤 Profile"]].map(([k,l])=>(
                   <button key={k} style={S.btn(portalTab===k?"gold":"stone")} onClick={()=>setPortalTab(k)}>{l}</button>
@@ -3749,45 +3765,27 @@ export default function App(){
 
               {/* PROFILE */}
               {portalTab==="profile"&&(
-                <div>
-                  <div style={S.card}>
-                    <div style={S.cardT}>👤 My Profile</div>
-                    <div style={S.grid("1fr 1fr",14)}>
-                      {[["Name",p.name],["Discord",p.discord],["Email",p.email],
-                        ["Timezone",TIMEZONES.find(t=>t.value===p.timezone)?.label||p.timezone],
-                        ["Favourite Civ",p.civ],["Current ELO",p.elo],
-                        ["Division",`${tierData?.icon||""} ${tierData?.name||"Unclassified"}`],
-                        ["Swiss Record",`${p.swissWins||0}W–${p.swissLosses||0}L`],
-                        ["All-time W/L",`${p.wins}W–${p.losses}L`],
-                        ["Placements",`${p.placementsDone}/${p.placementsNeeded}${p.classified?" ✅":""}`],
-                        ...(totalFee>0?[["Payment Status",
-                          p.paymentStatus==="received"?"✅ Received":
-                          p.paymentStatus==="submitted"?"⏳ Submitted":"❌ No Payment Submitted"]]:[]),
-                      ].map(([label,value])=>(
-                        <div key={label} style={{padding:"12px",background:C.obsidian,borderRadius:6,border:`1px solid ${C.stone}`}}>
-                          <div style={{color:C.dim,fontSize:10,letterSpacing:1,textTransform:"uppercase",marginBottom:4}}>{label}</div>
-                          <div style={{fontSize:14,fontWeight:"bold"}}>{value}</div>
-                        </div>
-                      ))}
-                    </div>
-                    <div style={{marginTop:20}}><button style={S.btn("red")} onClick={logoutPlayer}>🚪 Log Out</button></div>
-                  </div>
-
-                  {/* Player guide download */}
-                  <div style={{...S.card,border:`1px solid ${C.gold}44`}}>
-                    <div style={S.cardT}>📖 Player Guide</div>
-                    <div style={S.row(14,"flex-start")}>
-                      <div style={{fontSize:32}}>📘</div>
-                      <div style={{flex:1}}>
-                        <div style={{color:C.light,fontSize:13,lineHeight:1.6,marginBottom:10}}>
-                          A complete step-by-step guide covering registration, placement matches, setting up game lobbies, reporting results, voting on settings, the Swiss bracket, Top 8 playoff, and how to pay your entry fee via PayPal.
-                        </div>
-                        <a href="/AoE2-Guide-Player.pdf" download style={{...S.btn("gold"),display:"inline-block",textDecoration:"none"}}>
-                          ⬇️ Download Player Guide (PDF)
-                        </a>
+                <div style={S.card}>
+                  <div style={S.cardT}>👤 My Profile</div>
+                  <div style={S.grid("1fr 1fr",14)}>
+                    {[["Name",p.name],["Discord",p.discord],["Email",p.email],
+                      ["Timezone",TIMEZONES.find(t=>t.value===p.timezone)?.label||p.timezone],
+                      ["Favourite Civ",p.civ],["Current ELO",p.elo],
+                      ["Division",`${tierData?.icon||""} ${tierData?.name||"Unclassified"}`],
+                      ["Swiss Record",`${p.swissWins||0}W–${p.swissLosses||0}L`],
+                      ["All-time W/L",`${p.wins}W–${p.losses}L`],
+                      ["Placements",`${p.placementsDone}/${p.placementsNeeded}${p.classified?" ✅":""}`],
+                      ...(totalFee>0?[["Payment Status",
+                        p.paymentStatus==="received"?"✅ Received":
+                        p.paymentStatus==="submitted"?"⏳ Submitted":"❌ No Payment Submitted"]]:[]),
+                    ].map(([label,value])=>(
+                      <div key={label} style={{padding:"12px",background:C.obsidian,borderRadius:6,border:`1px solid ${C.stone}`}}>
+                        <div style={{color:C.dim,fontSize:10,letterSpacing:1,textTransform:"uppercase",marginBottom:4}}>{label}</div>
+                        <div style={{fontSize:14,fontWeight:"bold"}}>{value}</div>
                       </div>
-                    </div>
+                    ))}
                   </div>
+                  <div style={{marginTop:20}}><button style={S.btn("red")} onClick={logoutPlayer}>🚪 Log Out</button></div>
                 </div>
               )}
             </div>
