@@ -420,6 +420,22 @@ function LobbyBox({match,p1Name,p2Name,settings,isPlacement=false,maskPassword=f
   );
 }
 
+// Reusable "Save Changes" bar shown at the bottom of editable settings panels.
+// `dirty` controls whether the button is highlighted/enabled; shows a clear
+// confirmation state once saved so the admin knows it actually stuck.
+function SaveBar({dirty,onSave,label="Save Changes"}){
+  return(
+    <div style={{...S.row(12),marginTop:18,paddingTop:16,borderTop:`1px solid ${C.stone}`}}>
+      <button style={S.btn(dirty?"gold":"stone",!dirty)} disabled={!dirty} onClick={onSave}>
+        💾 {label}
+      </button>
+      <span style={{color:dirty?C.gold:C.dim,fontSize:12}}>
+        {dirty?"● Unsaved changes":"✓ All changes saved"}
+      </span>
+    </div>
+  );
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // MAIN APP
 // ══════════════════════════════════════════════════════════════════════════════
@@ -465,6 +481,15 @@ export default function App(){
   const [tAdminTab,setTAdminTab] = useState("season");
   const [portalTab,setPortalTab] = useState("dashboard");
   const [activeTier,setActiveTier] = useState(null);
+
+  // ── EXPLICIT-SAVE DRAFTS ──────────────────────────────────────────────────
+  // These tabs have several text/number inputs. Instead of persisting on every
+  // keystroke, edits are held in local draft state and only written with saveTour
+  // when the admin clicks the Save button — fewer writes, and a clear confirmation.
+  const [seasonDraft,setSeasonDraft]       = useState(null);
+  const [windowsDraft,setWindowsDraft]     = useState(null);
+  const [placementDraft,setPlacementDraft] = useState(null);
+  const [tiersDraft,setTiersDraft]         = useState(null);
 
   // ── MODALS ────────────────────────────────────────────────────────────────
   const [toast,setToast]             = useState(null);
@@ -758,6 +783,62 @@ export default function App(){
       players:t.players.map(p=>({...p,paymentStatus:"none"}))
     }),`🔄 All player payments reset for new season`);
     toast$("All payments reset — ready for next season!");
+  }
+
+  // ── DRAFT SYNC ────────────────────────────────────────────────────────────
+  // Re-initialise each draft whenever the active tournament changes, so a fresh
+  // copy of the server data is always the starting point (any unsaved edits
+  // made while on this tournament persist across tab switches until Saved or
+  // until you switch to a different tournament).
+  useEffect(()=>{
+    if(!T) return;
+    setSeasonDraft({
+      hostEmail:T.hostEmail||"",
+      name:T.season.name,
+      placementGames:T.season.placementGames,
+      swissRounds:T.season.swissRounds,
+      top8Cut:T.season.top8Cut,
+      prizeFee:T.season.prizeFee||0,
+      paymentInfo:T.season.paymentInfo||"",
+    });
+    setWindowsDraft(T.season.timeWindows?[...T.season.timeWindows.map(w=>({...w}))]:[]);
+    setPlacementDraft({...DEFAULT_PLACEMENT_SETTINGS,...T.season.placementSettings});
+    setTiersDraft(T.season.tiers.map(t=>({...t,prizeSplit:{...(t.prizeSplit||{first:60,second:25,third:15})}})));
+  },[T?.code]);
+
+  function saveSeasonSettings(){
+    if(!seasonDraft) return;
+    saveTour(T.code,t=>({...t,
+      hostEmail:seasonDraft.hostEmail,
+      season:{...t.season,
+        name:seasonDraft.name,
+        placementGames:Number(seasonDraft.placementGames)||1,
+        swissRounds:Number(seasonDraft.swissRounds)||1,
+        top8Cut:Number(seasonDraft.top8Cut)||2,
+        prizeFee:Number(seasonDraft.prizeFee)||0,
+        paymentInfo:seasonDraft.paymentInfo,
+      }
+    }),"⚙️ Season settings updated");
+    toast$("Season settings saved!");
+  }
+
+  function saveTimeWindows(){
+    if(!windowsDraft) return;
+    saveTour(T.code,t=>({...t,season:{...t.season,timeWindows:windowsDraft}}),"📅 Time windows updated");
+    toast$("Time windows saved!");
+  }
+
+  function savePlacementSettings(){
+    if(!placementDraft) return;
+    saveTour(T.code,t=>({...t,season:{...t.season,placementSettings:placementDraft}}),"🎮 Placement settings updated");
+    toast$("Placement settings saved!");
+  }
+
+  function saveTiers(){
+    if(!tiersDraft) return;
+    if(tiersDraft.length<2) return toast$("Need at least 2 tiers","error");
+    saveTour(T.code,t=>({...t,season:{...t.season,tiers:tiersDraft}}),"🏅 Divisions & prize fees updated");
+    toast$("Divisions saved!");
   }
 
   // Generate a PayPal.me / checkout URL with tracking note
@@ -2763,19 +2844,26 @@ export default function App(){
             </div>
 
             {/* SEASON */}
-            {tAdminTab==="season"&&(
+            {tAdminTab==="season"&&seasonDraft&&(()=>{
+              const currentComparable=JSON.stringify({
+                hostEmail:T.hostEmail||"",name:T.season.name,placementGames:T.season.placementGames,
+                swissRounds:T.season.swissRounds,top8Cut:T.season.top8Cut,prizeFee:T.season.prizeFee||0,
+                paymentInfo:T.season.paymentInfo||"",
+              });
+              const dirty=JSON.stringify(seasonDraft)!==currentComparable;
+              return(
               <div style={S.card}>
                 <div style={S.cardT}>⚙️ Season Settings</div>
 
                 {/* PayPal email — REQUIRED before launching a paid tournament */}
-                <div style={{background:T.hostEmail?.trim()?C.moss+"18":C.ember+"18",
-                  border:`1px solid ${T.hostEmail?.trim()?C.moss:C.ember}55`,borderRadius:6,
+                <div style={{background:seasonDraft.hostEmail?.trim()?C.moss+"18":C.ember+"18",
+                  border:`1px solid ${seasonDraft.hostEmail?.trim()?C.moss:C.ember}55`,borderRadius:6,
                   padding:"14px",marginBottom:16}}>
                   <label style={S.lbl}>Your PayPal Email — Required to receive prize fees</label>
                   <input style={S.inp} type="email" placeholder="your-paypal@email.com"
-                    value={T.hostEmail||""}
-                    onChange={e=>saveTour(T.code,t=>({...t,hostEmail:e.target.value}))}/>
-                  {!T.hostEmail?.trim()?(
+                    value={seasonDraft.hostEmail}
+                    onChange={e=>setSeasonDraft(d=>({...d,hostEmail:e.target.value}))}/>
+                  {!seasonDraft.hostEmail?.trim()?(
                     <div style={{color:C.ember,fontSize:11,marginTop:6}}>
                       ⚠️ Required before you can open division brackets for a paid tournament. Players send your prize fee share directly to this PayPal address.
                     </div>
@@ -2788,15 +2876,15 @@ export default function App(){
 
                 <div style={S.grid("1fr 1fr",14)}>
                   {[
-                    ["Season Name","name","text",T.season.name],
-                    ["Placement Games","placementGames","number",T.season.placementGames],
-                    ["Swiss Rounds","swissRounds","number",T.season.swissRounds],
-                    ["Top N Playoff Cutoff","top8Cut","number",T.season.top8Cut],
-                    ["Default Prize Fee ($) for NEW divisions","prizeFee","number",T.season.prizeFee||0],
-                  ].map(([label,field,type,val])=>(
+                    ["Season Name","name","text"],
+                    ["Placement Games","placementGames","number"],
+                    ["Swiss Rounds","swissRounds","number"],
+                    ["Top N Playoff Cutoff","top8Cut","number"],
+                    ["Default Prize Fee ($) for NEW divisions","prizeFee","number"],
+                  ].map(([label,field,type])=>(
                     <div key={field}><label style={S.lbl}>{label}</label>
-                      <input style={S.inp} type={type} value={val}
-                        onChange={e=>saveTour(T.code,t=>({...t,season:{...t.season,[field]:type==="number"?Number(e.target.value):e.target.value}}))}/>
+                      <input style={S.inp} type={type} value={seasonDraft[field]}
+                        onChange={e=>setSeasonDraft(d=>({...d,[field]:type==="number"?Number(e.target.value):e.target.value}))}/>
                       {field==="prizeFee"&&<div style={{color:C.dim,fontSize:10,marginTop:3}}>Each division has its own prize fee — set those in Admin → Tiers. This value is only the starting default for divisions you add later.</div>}
                     </div>
                   ))}
@@ -2810,9 +2898,11 @@ export default function App(){
                     <div style={{color:C.dim,fontSize:10,marginTop:3}}>Contact the platform organiser to change this amount. This applies to every division.</div>
                   </div>
                   <div style={{gridColumn:"1/-1"}}><label style={S.lbl}>Additional Payment Notes (public, optional)</label>
-                    <input style={S.inp} placeholder="e.g. Include your Discord tag in the PayPal note" value={T.season.paymentInfo||""}
-                      onChange={e=>saveTour(T.code,t=>({...t,season:{...t.season,paymentInfo:e.target.value}}))}/></div>
+                    <input style={S.inp} placeholder="e.g. Include your Discord tag in the PayPal note" value={seasonDraft.paymentInfo}
+                      onChange={e=>setSeasonDraft(d=>({...d,paymentInfo:e.target.value}))}/></div>
                 </div>
+
+                <SaveBar dirty={dirty} onSave={saveSeasonSettings} label="Save Season Settings"/>
 
                 {/* Host's own kickback earnings — read-only, builds trust */}
                 {(T.season.kickbackPercent||0)>0&&(()=>{
@@ -2889,10 +2979,13 @@ export default function App(){
                   </div>
                 </div>
               </div>
-            )}
+              );
+            })()}
 
             {/* TIME WINDOWS */}
-            {tAdminTab==="windows"&&(
+            {tAdminTab==="windows"&&windowsDraft&&(()=>{
+              const dirty=JSON.stringify(windowsDraft)!==JSON.stringify(T.season.timeWindows||[]);
+              return(
               <div style={S.card}>
                 <div style={S.cardT}>📅 Placement Time Windows</div>
                 <p style={{color:C.dim,fontSize:13,marginBottom:16,lineHeight:1.6}}>
@@ -2900,34 +2993,37 @@ export default function App(){
                   Leave empty to spread across 2-hour gaps with no day preference.
                   All times are UTC — tell players to check the Schedule tab for their local time.
                 </p>
-                {(T.season.timeWindows||[]).map((w,i)=>(
+                {windowsDraft.map((w,i)=>(
                   <div key={i} style={{...S.row(10,"flex-start"),padding:"12px",borderRadius:6,background:C.obsidian,border:`1px solid ${C.stone}`,marginBottom:8,flexWrap:"wrap"}}>
                     <div><label style={S.lbl}>Day (UTC)</label>
                       <select style={{...S.inp,width:120}}
                         value={w.day}
-                        onChange={e=>saveTour(T.code,t=>({...t,season:{...t.season,timeWindows:t.season.timeWindows.map((x,j)=>j!==i?x:{...x,day:e.target.value})}}))}>
+                        onChange={e=>setWindowsDraft(d=>d.map((x,j)=>j!==i?x:{...x,day:e.target.value}))}>
                         {["sun","mon","tue","wed","thu","fri","sat"].map(d=><option key={d} value={d}>{d.charAt(0).toUpperCase()+d.slice(1)}</option>)}
                       </select>
                     </div>
                     <div><label style={S.lbl}>Start Hour (UTC 0-23)</label>
                       <input style={{...S.inp,width:80}} type="number" min={0} max={23} value={w.startHour}
-                        onChange={e=>saveTour(T.code,t=>({...t,season:{...t.season,timeWindows:t.season.timeWindows.map((x,j)=>j!==i?x:{...x,startHour:Number(e.target.value)})}}))}/>
+                        onChange={e=>setWindowsDraft(d=>d.map((x,j)=>j!==i?x:{...x,startHour:Number(e.target.value)}))}/>
                     </div>
                     <div><label style={S.lbl}>End Hour (UTC 0-23)</label>
                       <input style={{...S.inp,width:80}} type="number" min={0} max={23} value={w.endHour}
-                        onChange={e=>saveTour(T.code,t=>({...t,season:{...t.season,timeWindows:t.season.timeWindows.map((x,j)=>j!==i?x:{...x,endHour:Number(e.target.value)})}}))}/>
+                        onChange={e=>setWindowsDraft(d=>d.map((x,j)=>j!==i?x:{...x,endHour:Number(e.target.value)}))}/>
                     </div>
                     <div><label style={S.lbl}>Label</label>
                       <input style={{...S.inp,flex:1,minWidth:120}} placeholder="e.g. Saturday afternoon" value={w.label||""}
-                        onChange={e=>saveTour(T.code,t=>({...t,season:{...t.season,timeWindows:t.season.timeWindows.map((x,j)=>j!==i?x:{...x,label:e.target.value})}}))}/>
+                        onChange={e=>setWindowsDraft(d=>d.map((x,j)=>j!==i?x:{...x,label:e.target.value}))}/>
                     </div>
                     <button style={{...S.btn("red"),alignSelf:"flex-end"}}
-                      onClick={()=>saveTour(T.code,t=>({...t,season:{...t.season,timeWindows:t.season.timeWindows.filter((_,j)=>j!==i)}}))}>✕</button>
+                      onClick={()=>setWindowsDraft(d=>d.filter((_,j)=>j!==i))}>✕</button>
                   </div>
                 ))}
-                <button style={S.btn("gold")} onClick={()=>saveTour(T.code,t=>({...t,season:{...t.season,timeWindows:[...(t.season.timeWindows||[]),{day:"sat",startHour:14,endHour:22,label:""}]}}))}>
+                <button style={S.btn("gold")} onClick={()=>setWindowsDraft(d=>[...d,{day:"sat",startHour:14,endHour:22,label:""}])}>
                   + Add Time Window
                 </button>
+
+                <SaveBar dirty={dirty} onSave={saveTimeWindows} label="Save Time Windows"/>
+
                 <div style={{marginTop:16,padding:"12px",background:C.obsidian+"88",borderRadius:6,fontSize:12,color:C.dim,lineHeight:1.7}}>
                   <strong style={{color:C.light}}>Examples:</strong><br/>
                   <strong>USA only:</strong> Sat 18:00–23:00 UTC + Sun 18:00–23:00 UTC (covers ET noon–5pm, PT 10am–3pm)<br/>
@@ -2937,10 +3033,13 @@ export default function App(){
                   <strong>USA + Australia:</strong> Difficult overlap — consider separate weekday windows
                 </div>
               </div>
-            )}
+              );
+            })()}
 
             {/* PLACEMENT SETTINGS */}
-            {tAdminTab==="placement"&&(
+            {tAdminTab==="placement"&&placementDraft&&(()=>{
+              const dirty=JSON.stringify(placementDraft)!==JSON.stringify({...DEFAULT_PLACEMENT_SETTINGS,...T.season.placementSettings});
+              return(
               <div style={S.card}>
                 <div style={S.cardT}>🎮 Placement Match Settings</div>
                 <div style={S.grid("1fr 1fr",14)}>
@@ -2953,31 +3052,37 @@ export default function App(){
                     ["civs","Civilizations",["Any (Random)","All civs allowed","Draft pick"]],
                   ].map(([field,label,opts])=>(
                     <div key={field}><label style={S.lbl}>{label}</label>
-                      <select style={S.inp} value={T.season.placementSettings?.[field]||opts[0]}
-                        onChange={e=>saveTour(T.code,t=>({...t,season:{...t.season,placementSettings:{...t.season.placementSettings,[field]:e.target.value}}}))}>
+                      <select style={S.inp} value={placementDraft[field]||opts[0]}
+                        onChange={e=>setPlacementDraft(d=>({...d,[field]:e.target.value}))}>
                         {opts.map(o=><option key={o}>{o}</option>)}</select></div>
                   ))}
                   <div><label style={S.lbl}>Spectator Delay (minutes, min 10)</label>
                     <input style={S.inp} type="number" min={10} max={60}
-                      value={T.season.placementSettings?.spectatorDelay||10}
-                      onChange={e=>saveTour(T.code,t=>({...t,season:{...t.season,placementSettings:{...t.season.placementSettings,spectatorDelay:Math.max(10,Number(e.target.value))}}}))}/>
+                      value={placementDraft.spectatorDelay||10}
+                      onChange={e=>setPlacementDraft(d=>({...d,spectatorDelay:Math.max(10,Number(e.target.value))}))}/>
                   </div>
                   <div style={{display:"flex",alignItems:"center",gap:10,paddingTop:20}}>
-                    <input type="checkbox" id="recReq" checked={T.season.placementSettings?.recordingRequired!==false}
-                      onChange={e=>saveTour(T.code,t=>({...t,season:{...t.season,placementSettings:{...t.season.placementSettings,recordingRequired:e.target.checked}}}))}
+                    <input type="checkbox" id="recReq" checked={placementDraft.recordingRequired!==false}
+                      onChange={e=>setPlacementDraft(d=>({...d,recordingRequired:e.target.checked}))}
                       style={{width:18,height:18,cursor:"pointer"}}/>
                     <label htmlFor="recReq" style={{...S.lbl,margin:0,cursor:"pointer"}}>Recording Required</label>
                   </div>
                   <div style={{gridColumn:"1/-1"}}><label style={S.lbl}>Notes / Special Rules</label>
                     <textarea style={{...S.inp,minHeight:80,resize:"vertical"}}
-                      value={T.season.placementSettings?.notes||""}
-                      onChange={e=>saveTour(T.code,t=>({...t,season:{...t.season,placementSettings:{...t.season.placementSettings,notes:e.target.value}}}))}/></div>
+                      value={placementDraft.notes||""}
+                      onChange={e=>setPlacementDraft(d=>({...d,notes:e.target.value}))}/></div>
                 </div>
+
+                <SaveBar dirty={dirty} onSave={savePlacementSettings} label="Save Placement Settings"/>
               </div>
-            )}
+              );
+            })()}
 
             {/* TIERS */}
-            {tAdminTab==="tiers"&&(
+            {tAdminTab==="tiers"&&tiersDraft&&(()=>{
+              const currentComparable=JSON.stringify(T.season.tiers);
+              const dirty=JSON.stringify(tiersDraft)!==currentComparable;
+              return(
               <div style={S.card}>
                 <div style={S.cardT}>🏅 Division Configuration, Entry Fees & Prize Splits</div>
                 <p style={{color:C.dim,fontSize:12,marginBottom:16,lineHeight:1.6}}>
@@ -2985,13 +3090,16 @@ export default function App(){
                   Set the cash prize percentage for 1st, 2nd, and 3rd place in each division. Percentages should total 100%.
                   The live prize pool shown updates automatically as more players' payments are confirmed received.
                 </p>
-                {T.season.tiers.map((tier)=>{
+                {tiersDraft.map((tier,tIdx)=>{
                   const tierPrizeFee=tier.prizeFee??T.season.prizeFee??0;
                   const tierTotalFee=(T.season.adminFee||0)+tierPrizeFee;
+                  // Live pool uses ACTUAL saved player data (not draft) — players' payment status
+                  // is tracked against the saved tier.id, which never changes while editing.
                   const paidInTier=T.players.filter(p=>p.tierId===tier.id&&p.paymentStatus==="received"&&!p.banned).length;
                   const tierPrizePool=paidInTier*tierPrizeFee;
                   const split=tier.prizeSplit||{first:60,second:25,third:15};
                   const splitTotal=(split.first||0)+(split.second||0)+(split.third||0);
+                  const updateTier=(patch)=>setTiersDraft(d=>d.map((x,i)=>i!==tIdx?x:{...x,...patch}));
                   return(
                   <div key={tier.id} style={{padding:"14px",borderRadius:6,background:C.obsidian,border:`1px solid ${tier.color}55`,marginBottom:10}}>
                     <div style={S.grid("1fr 1fr 1fr 1fr auto",10)}>
@@ -3002,12 +3110,12 @@ export default function App(){
                             onChange={e=>{
                               const val=field==="max"?(e.target.value===""?9999:Number(e.target.value)):
                                 type==="number"?Number(e.target.value):e.target.value;
-                              saveTour(T.code,t=>({...t,season:{...t.season,tiers:t.season.tiers.map(x=>x.id!==tier.id?x:{...x,[field]:val})}}));
+                              updateTier({[field]:val});
                             }}/></div>
                       ))}
                       <button style={{...S.btn("red"),alignSelf:"flex-end"}} onClick={()=>{
-                        if(T.season.tiers.length<=2) return toast$("Need at least 2 tiers","error");
-                        saveTour(T.code,t=>({...t,season:{...t.season,tiers:t.season.tiers.filter(x=>x.id!==tier.id)}}));
+                        if(tiersDraft.length<=2) return toast$("Need at least 2 tiers","error");
+                        setTiersDraft(d=>d.filter((_,i)=>i!==tIdx));
                       }}>✕</button>
                     </div>
 
@@ -3017,10 +3125,7 @@ export default function App(){
                         <div>
                           <label style={S.lbl}>Prize Fee for {tier.name} ($, 0 = free)</label>
                           <input style={S.inp} type="number" min={0} value={tierPrizeFee}
-                            onChange={e=>{
-                              const val=Number(e.target.value)||0;
-                              saveTour(T.code,t=>({...t,season:{...t.season,tiers:t.season.tiers.map(x=>x.id!==tier.id?x:{...x,prizeFee:val})}}));
-                            }}/>
+                            onChange={e=>updateTier({prizeFee:Number(e.target.value)||0})}/>
                         </div>
                         <div style={{display:"flex",flexDirection:"column",justifyContent:"center"}}>
                           <label style={S.lbl}>Total Entry (admin + prize)</label>
@@ -3045,10 +3150,7 @@ export default function App(){
                           <div key={key}>
                             <label style={S.lbl}>{label}</label>
                             <input style={S.inp} type="number" min={0} max={100} value={split[key]||0}
-                              onChange={e=>{
-                                const newSplit={...split,[key]:Number(e.target.value)};
-                                saveTour(T.code,t=>({...t,season:{...t.season,tiers:t.season.tiers.map(x=>x.id!==tier.id?x:{...x,prizeSplit:newSplit})}}));
-                              }}/>
+                              onChange={e=>updateTier({prizeSplit:{...split,[key]:Number(e.target.value)}})}/>
                             <div style={{color:C.dim,fontSize:10,marginTop:3}}>
                               ${Math.round(tierPrizePool*(split[key]||0)/100)}
                             </div>
@@ -3063,12 +3165,15 @@ export default function App(){
                   );
                 })}
                 <button style={S.btn("gold")} onClick={()=>{
-                  const last=T.season.tiers[T.season.tiers.length-1];
+                  const last=tiersDraft[tiersDraft.length-1];
                   const newT={id:uid(),name:"New Division",min:(last?.max||999)+1,max:9999,color:C.steel,icon:"🎯",prizeFee:T.season.prizeFee||0,prizeSplit:{first:60,second:25,third:15}};
-                  saveTour(T.code,t=>({...t,season:{...t.season,tiers:[...t.season.tiers.map(x=>x.max===9999?{...x,max:newT.min-1}:x),newT]}}));
+                  setTiersDraft(d=>[...d.map(x=>x.max===9999?{...x,max:newT.min-1}:x),newT]);
                 }}>+ Add Division</button>
+
+                <SaveBar dirty={dirty} onSave={saveTiers} label="Save Divisions"/>
               </div>
-            )}
+              );
+            })()}
 
             {/* PLAYERS */}
             {tAdminTab==="players"&&(
