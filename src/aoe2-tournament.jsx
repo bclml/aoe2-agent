@@ -599,6 +599,22 @@ export default function App(){
   const [windowsDraft,setWindowsDraft]     = useState(null);
   const [placementDraft,setPlacementDraft] = useState(null);
   const [tiersDraft,setTiersDraft]         = useState(null);
+  const [profileDraft,setProfileDraft]     = useState(null);
+  const [pwChangeForm,setPwChangeForm]     = useState({newPw:"",confirmPw:""});
+
+  // Sync the player's editable-profile draft only when a DIFFERENT player logs
+  // in — not on every refresh of loggedInPlayer (which updates reactively as
+  // match results, payments, etc. come in) so we don't clobber in-progress edits.
+  useEffect(()=>{
+    if(!loggedInPlayer){ setProfileDraft(null); return; }
+    setProfileDraft({
+      name:loggedInPlayer.name,
+      discord:loggedInPlayer.discord,
+      email:loggedInPlayer.email,
+      civ:loggedInPlayer.civ,
+      timezone:loggedInPlayer.timezone,
+    });
+  },[loggedInPlayer?.id]);
 
   // ── MODALS ────────────────────────────────────────────────────────────────
   const [toast,setToast]             = useState(null);
@@ -863,6 +879,37 @@ export default function App(){
     logoutPlayer();
   }
 
+  // ── PLAYER PROFILE SELF-EDIT ──────────────────────────────────────────────
+  // Lets a logged-in player update their own name/Discord/email/civ/timezone.
+  // ELO, division, payment status, and match history stay system-managed.
+  function playerUpdateProfile(code,playerId,updates){
+    const tour=master.tournaments[code];if(!tour) return;
+    const player=tour.players.find(p=>p.id===playerId);if(!player) return;
+    const name=updates.name?.trim();
+    const discord=updates.discord?.trim();
+    const email=updates.email?.trim().toLowerCase();
+    if(!name) return toast$("Name is required","error");
+    if(!discord) return toast$("Discord tag is required","error");
+    if(!email||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return toast$("Enter a valid email address","error");
+    if(tour.players.some(p=>p.id!==playerId&&p.email?.toLowerCase()===email))
+      return toast$("That email is already used by another player in this tournament","error");
+    if(tour.players.some(p=>p.id!==playerId&&p.discord?.toLowerCase()===discord.toLowerCase()))
+      return toast$("That Discord tag is already used by another player in this tournament","error");
+    saveTour(code,t=>({...t,players:t.players.map(p=>p.id!==playerId?p:{
+      ...p,name,discord,email,civ:updates.civ,timezone:updates.timezone,
+    })}),`✏️ ${name} updated their profile`);
+    toast$("Profile updated!");
+  }
+
+  function playerChangeOwnPassword(code,playerId,newPw,confirmPw){
+    if(!newPw||newPw.length<6) return toast$("Password must be at least 6 characters","error");
+    if(newPw!==confirmPw) return toast$("Passwords don't match","error");
+    saveTour(code,t=>({...t,players:t.players.map(p=>p.id!==playerId?p:{...p,pwHash:pwHash(newPw)})}),
+      "🔑 Password changed by player");
+    setPwChangeForm({newPw:"",confirmPw:""});
+    toast$("Password changed!");
+  }
+
   // ── HELPERS ───────────────────────────────────────────────────────────────
   const T=activeTournament; // shorthand
   const tierPs   =(tid)=>T?.players.filter(p=>p.classified&&p.tierId===tid&&!p.banned)||[];
@@ -873,6 +920,17 @@ export default function App(){
     if(!iso) return "—";
     try{return new Date(iso).toLocaleString("en-CA",{timeZone:tz,weekday:"short",month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"});}
     catch{return iso;}
+  }
+
+  // Formats a plain "YYYY-MM-DD" date string (from a <input type="date">) into
+  // a readable form like "Friday, July 3" — used for tournament start/deadline display.
+  function formatDateLong(dateStr){
+    if(!dateStr) return "";
+    try{
+      const [y,m,d]=dateStr.split("-").map(Number);
+      const dt=new Date(y,m-1,d); // local, avoids UTC off-by-one on date-only strings
+      return dt.toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"});
+    }catch{return dateStr;}
   }
 
   // ── PAYMENT STATUS MANAGEMENT ────────────────────────────────────────────
@@ -936,6 +994,8 @@ export default function App(){
       top8Cut:T.season.top8Cut,
       prizeFee:T.season.prizeFee||0,
       paymentInfo:T.season.paymentInfo||"",
+      startDate:T.season.startDate||"",
+      registrationDeadline:T.season.registrationDeadline||"",
     });
     setWindowsDraft(T.season.timeWindows?[...T.season.timeWindows.map(w=>({...w}))]:[]);
     setPlacementDraft({...DEFAULT_PLACEMENT_SETTINGS,...T.season.placementSettings});
@@ -953,6 +1013,8 @@ export default function App(){
         top8Cut:Number(seasonDraft.top8Cut)||2,
         prizeFee:Number(seasonDraft.prizeFee)||0,
         paymentInfo:seasonDraft.paymentInfo,
+        startDate:seasonDraft.startDate,
+        registrationDeadline:seasonDraft.registrationDeadline,
       }
     }),"⚙️ Season settings updated");
     toast$("Season settings saved!");
@@ -2472,6 +2534,20 @@ export default function App(){
               <p style={{color:C.dim,fontSize:13,maxWidth:500,margin:"0 auto 16px",lineHeight:1.7}}>
                 {T.season.name} · Hosted by {T.hostName||"Community"}
               </p>
+              {(T.season.startDate||T.season.registrationDeadline)&&(
+                <div style={{...S.row(8,"center"),flexWrap:"wrap",marginBottom:14}}>
+                  {T.season.registrationDeadline&&(
+                    <span style={{...S.badge(C.ember),fontSize:12,padding:"6px 14px"}}>
+                      📋 Register before {formatDateLong(T.season.registrationDeadline)}
+                    </span>
+                  )}
+                  {T.season.startDate&&(
+                    <span style={{...S.badge(C.gold),fontSize:12,padding:"6px 14px"}}>
+                      ⚔️ Starts {formatDateLong(T.season.startDate)}
+                    </span>
+                  )}
+                </div>
+              )}
               {anyFee&&(
                 <div style={{...S.badge(C.gold),fontSize:12,padding:"6px 16px",margin:"0 auto 10px"}}>
                   💰 Entry fee varies by division — see below
@@ -2574,6 +2650,16 @@ export default function App(){
             ):(
               <div style={S.card}>
                 <div style={S.cardT}>📋 Register for {T.name}</div>
+                {(T.season.startDate||T.season.registrationDeadline)&&(
+                  <div style={{background:C.steel+"18",border:`1px solid ${C.steel}44`,borderRadius:6,padding:"10px 14px",marginBottom:14,fontSize:13}}>
+                    {T.season.registrationDeadline&&(
+                      <div style={{color:C.ember,fontWeight:"bold"}}>📋 Register before {formatDateLong(T.season.registrationDeadline)}</div>
+                    )}
+                    {T.season.startDate&&(
+                      <div style={{color:C.gold,fontWeight:"bold",marginTop:T.season.registrationDeadline?4:0}}>⚔️ Tournament starts {formatDateLong(T.season.startDate)}</div>
+                    )}
+                  </div>
+                )}
                 {anyFee&&(
                   <div style={{background:C.gold+"18",border:`1px solid ${C.gold}44`,borderRadius:6,padding:"12px",marginBottom:16,fontSize:13,lineHeight:1.6}}>
                     💰 <strong style={{color:C.gold}}>Entry fee varies by division:</strong>
@@ -2969,7 +3055,8 @@ export default function App(){
                   const fee=getTierTotalFee(T,t.id);
                   return `${t.icon} **${t.name}**: ${t.min}–${t.max===9999?"∞":t.max} ELO${fee>0?` · $${fee} entry`:" · Free"}`;
                 }).join("\n");
-                const text=`@everyone\n\n⚔️ **${T.name} — ${T.season.name}**\n\n🏰 Register at: ${tourUrl(T.code)}\n🆓 ${T.season.placementGames} free placement games → auto-scheduled\n🎮 Players self-report results — no scheduling needed\n🏆 ${T.season.swissRounds}-round Swiss → Top ${T.season.top8Cut} playoff per division\n${anyFee?`💰 Entry fee varies by division (see below) — placement games are always free\n`:""}\n**Divisions:**\n${divisionLines}\n${T.season.paymentInfo?`\n💰 Payment: ${T.season.paymentInfo}`:""}\n🌍 All timezones welcome · Games played on weekends`;
+                const dateLines=`${T.season.registrationDeadline?`📋 Register before: ${formatDateLong(T.season.registrationDeadline)}\n`:""}${T.season.startDate?`⚔️ Tournament starts: ${formatDateLong(T.season.startDate)}\n`:""}`;
+                const text=`@everyone\n\n⚔️ **${T.name} — ${T.season.name}**\n\n🏰 Register at: ${tourUrl(T.code)}\n${dateLines}🆓 ${T.season.placementGames} free placement games → auto-scheduled\n🎮 Players self-report results — no scheduling needed\n🏆 ${T.season.swissRounds}-round Swiss → Top ${T.season.top8Cut} playoff per division\n${anyFee?`💰 Entry fee varies by division (see below) — placement games are always free\n`:""}\n**Divisions:**\n${divisionLines}\n${T.season.paymentInfo?`\n💰 Payment: ${T.season.paymentInfo}`:""}\n🌍 All timezones welcome · Games played on weekends`;
                 return(<>
                   <div style={{background:"#36393F",border:"1px solid #4F545C",borderRadius:8,padding:16,fontFamily:"monospace",fontSize:12,color:"#DCDDDE",whiteSpace:"pre-wrap",marginBottom:10,lineHeight:1.6,maxHeight:340,overflow:"auto"}}>{text}</div>
                   <button style={S.btn("gold")} onClick={()=>{navigator.clipboard.writeText(text);toast$("Copied!");}}>📋 Copy</button>
@@ -3023,12 +3110,41 @@ export default function App(){
               const currentComparable=JSON.stringify({
                 hostEmail:T.hostEmail||"",name:T.season.name,placementGames:T.season.placementGames,
                 swissRounds:T.season.swissRounds,top8Cut:T.season.top8Cut,prizeFee:T.season.prizeFee||0,
-                paymentInfo:T.season.paymentInfo||"",
+                paymentInfo:T.season.paymentInfo||"",startDate:T.season.startDate||"",
+                registrationDeadline:T.season.registrationDeadline||"",
               });
               const dirty=JSON.stringify(seasonDraft)!==currentComparable;
               return(
               <div style={S.card}>
                 <div style={S.cardT}>⚙️ Season Settings</div>
+
+                {/* Tournament dates — shown publicly on the home page and Discord announcement */}
+                <div style={{background:C.steel+"18",border:`1px solid ${C.steel}55`,borderRadius:6,
+                  padding:"14px",marginBottom:16}}>
+                  <div style={{color:C.gold,fontWeight:"bold",fontSize:13,marginBottom:10}}>📅 Tournament Dates</div>
+                  <div style={S.grid("1fr 1fr",14)}>
+                    <div>
+                      <label style={S.lbl}>Tournament Start Date</label>
+                      <input style={S.inp} type="date" value={seasonDraft.startDate}
+                        onChange={e=>setSeasonDraft(d=>({...d,startDate:e.target.value}))}/>
+                      <div style={{color:C.dim,fontSize:10,marginTop:3}}>When the bracket is expected to kick off — shown to players as "Tournament starts".</div>
+                    </div>
+                    <div>
+                      <label style={S.lbl}>Registration Deadline</label>
+                      <input style={S.inp} type="date" value={seasonDraft.registrationDeadline}
+                        onChange={e=>setSeasonDraft(d=>({...d,registrationDeadline:e.target.value}))}/>
+                      <div style={{color:C.dim,fontSize:10,marginTop:3}}>Last day to register — shown to players as "Register before". You still close registration manually below when ready.</div>
+                    </div>
+                  </div>
+                  {(seasonDraft.startDate||seasonDraft.registrationDeadline)&&(
+                    <div style={{marginTop:10,color:C.light,fontSize:12}}>
+                      Preview:{" "}
+                      {seasonDraft.registrationDeadline&&<span style={S.badge(C.ember)}>📋 Register before {formatDateLong(seasonDraft.registrationDeadline)}</span>}
+                      {" "}
+                      {seasonDraft.startDate&&<span style={S.badge(C.gold)}>⚔️ Starts {formatDateLong(seasonDraft.startDate)}</span>}
+                    </div>
+                  )}
+                </div>
 
                 {/* PayPal email — REQUIRED before launching a paid tournament */}
                 <div style={{background:seasonDraft.hostEmail?.trim()?C.moss+"18":C.ember+"18",
@@ -3951,33 +4067,90 @@ export default function App(){
               )}
 
               {/* PROFILE */}
-              {portalTab==="profile"&&(
-                <div style={S.card}>
-                  <div style={S.cardT}>👤 My Profile</div>
-                  <div style={S.grid("1fr 1fr",14)}>
-                    {[["Name",p.name],["Discord",p.discord],["Email",p.email],
-                      ["Timezone",TIMEZONES.find(t=>t.value===p.timezone)?.label||p.timezone],
-                      ["Favourite Civ",p.civ],["Current ELO",p.elo],
-                      ["Division",`${tierData?.icon||""} ${tierData?.name||"Unclassified"}`],
-                      ["Swiss Record",`${p.swissWins||0}W–${p.swissLosses||0}L`],
-                      ["All-time W/L",`${p.wins}W–${p.losses}L`],
-                      ["Placements",`${p.placementsDone}/${p.placementsNeeded}${p.classified?" ✅":""}`],
-                      ...(totalFee>0?[["Payment Status",
-                        p.paymentStatus==="received"?"✅ Received":
-                        p.paymentStatus==="submitted"?"⏳ Submitted":"❌ No Payment Submitted"]]:[]),
-                    ].map(([label,value])=>(
-                      <div key={label} style={{padding:"12px",background:C.obsidian,borderRadius:6,border:`1px solid ${C.stone}`}}>
-                        <div style={{color:C.dim,fontSize:10,letterSpacing:1,textTransform:"uppercase",marginBottom:4}}>{label}</div>
-                        <div style={{fontSize:14,fontWeight:"bold"}}>{value}</div>
+              {portalTab==="profile"&&profileDraft&&(()=>{
+                const dirty=JSON.stringify(profileDraft)!==JSON.stringify({
+                  name:p.name,discord:p.discord,email:p.email,civ:p.civ,timezone:p.timezone,
+                });
+                return(
+                <div>
+                  {/* EDITABLE PROFILE */}
+                  <div style={S.card}>
+                    <div style={S.cardT}>✏️ Edit Profile</div>
+                    <div style={S.grid("1fr 1fr",14)}>
+                      <div><label style={S.lbl}>Name</label>
+                        <input style={S.inp} value={profileDraft.name}
+                          onChange={e=>setProfileDraft(d=>({...d,name:e.target.value}))}/></div>
+                      <div><label style={S.lbl}>Discord Tag</label>
+                        <input style={S.inp} value={profileDraft.discord}
+                          onChange={e=>setProfileDraft(d=>({...d,discord:e.target.value}))}/></div>
+                      <div><label style={S.lbl}>Email</label>
+                        <input style={S.inp} type="email" value={profileDraft.email}
+                          onChange={e=>setProfileDraft(d=>({...d,email:e.target.value}))}/>
+                        <div style={{color:C.dim,fontSize:10,marginTop:3}}>This is also your login.</div>
                       </div>
-                    ))}
+                      <div><label style={S.lbl}>Favourite Civ</label>
+                        <select style={S.inp} value={profileDraft.civ}
+                          onChange={e=>setProfileDraft(d=>({...d,civ:e.target.value}))}>
+                          {CIVS.map(c=><option key={c}>{c}</option>)}
+                        </select></div>
+                      <div style={{gridColumn:"1/-1"}}><label style={S.lbl}>Timezone</label>
+                        <select style={S.inp} value={profileDraft.timezone}
+                          onChange={e=>setProfileDraft(d=>({...d,timezone:e.target.value}))}>
+                          {TIMEZONES.map(tz=><option key={tz.value} value={tz.value}>{tz.label}</option>)}
+                        </select>
+                        <div style={{color:C.dim,fontSize:10,marginTop:3}}>Your match times are shown in this timezone.</div>
+                      </div>
+                    </div>
+                    <SaveBar dirty={dirty} onSave={()=>playerUpdateProfile(T.code,p.id,profileDraft)} label="Save Profile"/>
                   </div>
-                  <div style={{marginTop:20,display:"flex",gap:10,flexWrap:"wrap"}}>
+
+                  {/* CHANGE PASSWORD */}
+                  <div style={S.card}>
+                    <div style={S.cardT}>🔑 Change Password</div>
+                    <div style={S.grid("1fr 1fr",14)}>
+                      <div><label style={S.lbl}>New Password</label>
+                        <input style={S.inp} type="password" placeholder="Min 6 characters" value={pwChangeForm.newPw}
+                          onChange={e=>setPwChangeForm(f=>({...f,newPw:e.target.value}))}/></div>
+                      <div><label style={S.lbl}>Confirm New Password</label>
+                        <input style={{...S.inp,borderColor:pwChangeForm.confirmPw&&pwChangeForm.confirmPw!==pwChangeForm.newPw?C.ember:undefined}}
+                          type="password" placeholder="Repeat" value={pwChangeForm.confirmPw}
+                          onChange={e=>setPwChangeForm(f=>({...f,confirmPw:e.target.value}))}/></div>
+                    </div>
+                    <button style={{...S.btn("gold"),marginTop:14}}
+                      disabled={!pwChangeForm.newPw||pwChangeForm.newPw!==pwChangeForm.confirmPw}
+                      onClick={()=>playerChangeOwnPassword(T.code,p.id,pwChangeForm.newPw,pwChangeForm.confirmPw)}>
+                      Update Password
+                    </button>
+                  </div>
+
+                  {/* READ-ONLY STATS */}
+                  <div style={S.card}>
+                    <div style={S.cardT}>📊 My Stats</div>
+                    <div style={S.grid("1fr 1fr",14)}>
+                      {[["Current ELO",p.elo],
+                        ["Division",`${tierData?.icon||""} ${tierData?.name||"Unclassified"}`],
+                        ["Swiss Record",`${p.swissWins||0}W–${p.swissLosses||0}L`],
+                        ["All-time W/L",`${p.wins}W–${p.losses}L`],
+                        ["Placements",`${p.placementsDone}/${p.placementsNeeded}${p.classified?" ✅":""}`],
+                        ...(totalFee>0?[["Payment Status",
+                          p.paymentStatus==="received"?"✅ Received":
+                          p.paymentStatus==="submitted"?"⏳ Submitted":"❌ No Payment Submitted"]]:[]),
+                      ].map(([label,value])=>(
+                        <div key={label} style={{padding:"12px",background:C.obsidian,borderRadius:6,border:`1px solid ${C.stone}`}}>
+                          <div style={{color:C.dim,fontSize:10,letterSpacing:1,textTransform:"uppercase",marginBottom:4}}>{label}</div>
+                          <div style={{fontSize:14,fontWeight:"bold"}}>{value}</div>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{color:C.dim,fontSize:10,marginTop:10}}>These are system-managed and update automatically as you play.</div>
+                  </div>
+
+                  <div style={{marginTop:4,marginBottom:16,display:"flex",gap:10,flexWrap:"wrap"}}>
                     <button style={S.btn("red")} onClick={logoutPlayer}>🚪 Log Out</button>
                   </div>
 
                   {/* Delete registration */}
-                  <div style={{marginTop:20,paddingTop:16,borderTop:`1px solid ${C.stone}`}}>
+                  <div style={S.card}>
                     <div style={{color:C.ember,fontSize:12,letterSpacing:1,textTransform:"uppercase",fontWeight:"bold",marginBottom:8}}>
                       ⚠️ Danger Zone
                     </div>
@@ -3998,7 +4171,8 @@ export default function App(){
                     )}
                   </div>
                 </div>
-              )}
+                );
+              })()}
             </div>
           );
         })()}
