@@ -2427,13 +2427,18 @@ export default function App(){
                   const tierFee=getTierTotalFee(T,t.id);
                   const tierPrizeFee=getTierPrizeFee(T,t.id);
                   const tierPrize=tierPaid*tierPrizeFee;
+                  const tierRegistered=T.players.filter(p=>p.tierId===t.id&&!p.banned).length;
+                  const tierClassified=T.players.filter(p=>p.classified&&p.tierId===t.id&&!p.banned).length;
                   return(
                     <div key={t.id} style={{padding:"14px",borderRadius:6,background:t.color+"18",border:`1px solid ${t.color}44`}}>
                       <div style={{fontSize:26,marginBottom:4}}>{t.icon}</div>
                       <div style={{color:t.color,fontWeight:"bold",fontSize:15}}>{t.name}</div>
                       <div style={{color:C.dim,fontSize:12,marginTop:2}}>{t.min}–{t.max===9999?"∞":t.max} ELO</div>
                       <div style={{color:C.light,fontSize:12,marginTop:6,fontWeight:"bold"}}>
-                        {T.players.filter(p=>p.classified&&p.tierId===t.id&&!p.banned).length} classified
+                        {tierClassified} classified
+                      </div>
+                      <div style={{color:C.dim,fontSize:11,marginTop:2}}>
+                        {tierRegistered} registered
                       </div>
                       <div style={{marginTop:6}}>
                         {tierFee>0
@@ -2596,6 +2601,7 @@ export default function App(){
           <div>
             {T.season.tiers.map(tier=>{
               const players=T.players.filter(p=>p.classified&&p.tierId===tier.id&&!p.banned);
+              const registered=T.players.filter(p=>p.tierId===tier.id&&!p.banned).length;
               const bracket=T.tournaments[tier.id];
               const stand=tierStandLocal(tier.id);
               return(
@@ -2604,7 +2610,7 @@ export default function App(){
                     <div style={{fontSize:32}}>{tier.icon}</div>
                     <div style={{flex:1}}>
                       <div style={{color:tier.color,fontWeight:"bold",fontSize:18}}>{tier.name}</div>
-                      <div style={{color:C.dim,fontSize:12}}>{tier.min}–{tier.max===9999?"∞":tier.max} ELO · {players.length} classified</div>
+                      <div style={{color:C.dim,fontSize:12}}>{tier.min}–{tier.max===9999?"∞":tier.max} ELO · {players.length} classified · {registered} registered</div>
                     </div>
                     <div style={S.row(8)}>
                       {!bracket?
