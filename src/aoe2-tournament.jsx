@@ -151,7 +151,7 @@ function swissPair(players, prevMatches=[]){
           winner:null,p1Reported:null,p2Reported:null,disputed:false,reported:false,
           vetoes:[],pickedMap:null,scheduledTime:null,
           lobbyName:"",lobbyPw:makeLobbyPw(uid()),
-          spectatorDelay:10,recordingRequired:true});
+          spectatorDelay:10,recordingRequired:true,messages:[]});
         used.add(sorted[i].id);used.add(sorted[j].id);found=true;break;
       }
     }
@@ -159,7 +159,7 @@ function swissPair(players, prevMatches=[]){
       paired.push({id:uid(),p1:sorted[i].id,p2:"BYE",
         winner:sorted[i].id,p1Reported:"win",p2Reported:null,
         disputed:false,reported:true,vetoes:[],pickedMap:null,scheduledTime:null,
-        lobbyName:"BYE",lobbyPw:"",spectatorDelay:10,recordingRequired:false});
+        lobbyName:"BYE",lobbyPw:"",spectatorDelay:10,recordingRequired:false,messages:[]});
       used.add(sorted[i].id);
     }
   }
@@ -180,7 +180,7 @@ function buildTop8(players, lobbyPrefix){
     winner:null,p1Reported:null,p2Reported:null,disputed:false,reported:false,
     vetoes:[],pickedMap:null,scheduledTime:null,
     lobbyName:makeLobbyName(lobbyPrefix,`${rnd}${mi+1}`,p1?.name,p2?.name),
-    lobbyPw:makeLobbyPw(uid()),spectatorDelay:10,recordingRequired:true
+    lobbyPw:makeLobbyPw(uid()),spectatorDelay:10,recordingRequired:true,messages:[]
   });
   return [
     [mk(seeded[0],seeded[7],"QF",0),mk(seeded[3],seeded[4],"QF",1),
@@ -259,7 +259,7 @@ function generatePlacementSchedule(players, placementGames, windows, lobbyPrefix
       lobbyPw:makeLobbyPw(id),
       spectatorDelay:placementSettings?.spectatorDelay||10,
       recordingRequired:placementSettings?.recordingRequired!==false,
-      pickedMap:null,isPlacement:true,
+      pickedMap:null,isPlacement:true,messages:[],
     };
   });
 }
@@ -432,6 +432,54 @@ function SaveBar({dirty,onSave,label="Save Changes"}){
       <span style={{color:dirty?C.gold:C.dim,fontSize:12}}>
         {dirty?"● Unsaved changes":"✓ All changes saved"}
       </span>
+    </div>
+  );
+}
+
+// In-platform messaging between two matched opponents — replaces needing to
+// coordinate over Discord. Messages persist with the match itself, so they're
+// visible to both players whenever they check their portal.
+function MatchChat({messages,currentPlayerId,opponentName,onSend}){
+  const [text,setText]=useState("");
+  const send=()=>{ if(text.trim()){ onSend(text); setText(""); } };
+  return(
+    <div style={{marginTop:10,background:C.obsidian,border:`1px solid ${C.stone}`,borderRadius:6,padding:"12px"}}>
+      <div style={{color:C.gold,fontSize:11,fontWeight:"bold",letterSpacing:1,marginBottom:8}}>
+        💬 MESSAGE {opponentName?.toUpperCase()||"OPPONENT"}
+      </div>
+      {(!messages||messages.length===0)?(
+        <div style={{color:C.dim,fontSize:12,marginBottom:8}}>
+          No messages yet — say hello or suggest a time to play!
+        </div>
+      ):(
+        <div style={{maxHeight:180,overflowY:"auto",marginBottom:10,display:"flex",flexDirection:"column",gap:6,paddingRight:4}}>
+          {messages.map(m=>{
+            const mine=m.senderId===currentPlayerId;
+            return(
+              <div key={m.id} style={{
+                alignSelf:mine?"flex-end":"flex-start",maxWidth:"82%",
+                background:mine?C.gold+"22":C.steel+"33",
+                border:`1px solid ${mine?C.gold:C.steel}55`,
+                borderRadius:8,padding:"7px 10px",
+              }}>
+                <div style={{fontSize:10,color:C.dim,marginBottom:2}}>
+                  {m.senderName} · {new Date(m.sentAt).toLocaleString([],{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"})}
+                </div>
+                <div style={{fontSize:13,color:C.light,wordBreak:"break-word"}}>{m.text}</div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <div style={{display:"flex",gap:6}}>
+        <input style={{...S.inp,flex:1}} placeholder="Type a message…" value={text}
+          onChange={e=>setText(e.target.value)}
+          onKeyDown={e=>{if(e.key==="Enter") send();}}/>
+        <button style={{...S.btn("gold"),padding:"9px 16px"}} onClick={send} disabled={!text.trim()}>Send</button>
+      </div>
+      <div style={{color:C.dim,fontSize:10,marginTop:6}}>
+        Messages save instantly. Your opponent may need to refresh their portal to see new ones.
+      </div>
     </div>
   );
 }
@@ -965,6 +1013,18 @@ export default function App(){
     }
   }
 
+  // ── MATCH CHAT — PLACEMENT ────────────────────────────────────────────────
+  // Lets the two players in a placement match talk to each other right inside
+  // the app, instead of needing Discord, to coordinate a time/lobby etc.
+  function sendPlacementMessage(code,matchId,senderId,senderName,text){
+    if(!text?.trim()) return;
+    const tour=master.tournaments[code];if(!tour) return;
+    const m=tour.placementMatches?.find(x=>x.id===matchId);if(!m) return;
+    const newMsg={id:uid(),senderId,senderName,text:text.trim(),sentAt:new Date().toISOString()};
+    saveTour(code,t=>({...t,placementMatches:t.placementMatches.map(x=>
+      x.id!==matchId?x:{...x,messages:[...(x.messages||[]),newMsg]})}));
+  }
+
   function adminResolvePlacement(code,matchId,winnerId){
     const tour=master.tournaments[code];if(!tour) return;
     const m=tour.placementMatches?.find(x=>x.id===matchId);if(!m) return;
@@ -1079,6 +1139,18 @@ export default function App(){
     if(agreed) finalizeMatchResult(code,tierId,roundIdx,matchId,isTop8,claimedWinnerId,finalMatch);
     else if(otherReport!==undefined&&otherReport!==null) toast$("⚠️ Conflict — admin will review","error");
     else toast$("Result submitted — waiting for opponent.");
+  }
+
+  // ── MATCH CHAT — TOURNAMENT (SWISS / TOP 8) ──────────────────────────────
+  function sendTournamentMessage(code,tierId,roundIdx,matchId,isTop8,senderId,senderName,text){
+    if(!text?.trim()) return;
+    const tour=master.tournaments[code];if(!tour) return;
+    const bracket=tour.tournaments[tierId];if(!bracket) return;
+    const newMsg={id:uid(),senderId,senderName,text:text.trim(),sentAt:new Date().toISOString()};
+    const upd=rounds=>rounds.map((round,ri)=>ri!==roundIdx?round:round.map(x=>
+      x.id!==matchId?x:{...x,messages:[...(x.messages||[]),newMsg]}));
+    const newBracket=isTop8?{...bracket,top8:upd(bracket.top8)}:{...bracket,swissRounds:upd(bracket.swissRounds)};
+    saveTour(code,t=>({...t,tournaments:{...t.tournaments,[tierId]:newBracket}}));
   }
 
   function finalizeMatchResult(code,tierId,roundIdx,matchId,isTop8,winnerId,match){
@@ -3626,6 +3698,10 @@ export default function App(){
                                   p1Name={T.players.find(x=>x.id===m.p1)?.name||"P1"}
                                   p2Name={opp?.name||"P2"}
                                   settings={T.season.placementSettings} isPlacement={true}/>
+                                {opp&&(
+                                  <MatchChat messages={m.messages} currentPlayerId={p.id} opponentName={opp.name}
+                                    onSend={(text)=>sendPlacementMessage(T.code,m.id,p.id,p.name,text)}/>
+                                )}
                                 {!alreadyReported&&!m.disputed&&opp&&(
                                   <div style={{marginTop:10}}>
                                     <div style={{color:C.dim,fontSize:11,marginBottom:6}}>Report result:</div>
@@ -3682,6 +3758,10 @@ export default function App(){
                               {alreadyReported&&!m.winner&&<span style={S.badge(C.gold)}>⏳ Waiting for opponent</span>}
                             </div>
                             <LobbyBox match={m} p1Name={p.name} p2Name={m.oppName} settings={m.settings}/>
+                            {opp&&(
+                              <MatchChat messages={m.messages} currentPlayerId={p.id} opponentName={m.oppName}
+                                onSend={(text)=>sendTournamentMessage(T.code,m.tierId,m.roundIdx,m.id,m.isTop8,p.id,p.name,text)}/>
+                            )}
                             {opp&&!m.disputed&&<button style={{...S.btn("stone"),fontSize:10,padding:"4px 10px",marginTop:8}} onClick={()=>setReportModal(m.oppId)}>🚨 Report {m.oppName}</button>}
                           </div>
                         );
@@ -3742,6 +3822,10 @@ export default function App(){
                             {alreadyReported&&!m.winner&&<span style={S.badge(C.gold)}>⏳ Waiting</span>}
                           </div>
                           <LobbyBox match={m} p1Name={p.name} p2Name={m.oppName} settings={m.settings}/>
+                          {opp&&(
+                            <MatchChat messages={m.messages} currentPlayerId={p.id} opponentName={m.oppName}
+                              onSend={(text)=>sendTournamentMessage(T.code,m.tierId,m.roundIdx,m.id,m.isTop8,p.id,p.name,text)}/>
+                          )}
                         </div>);
                       })}
                     </div>
