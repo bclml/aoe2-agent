@@ -2490,7 +2490,7 @@ export default function App(){
 
         {/* NAV */}
         <div style={{display:"flex",background:C.parch,borderBottom:`1px solid ${C.stone}`,overflowX:"auto"}}>
-          {[["home","🏰 Home"],["register","📋 Register"],["tiers","🏆 Divisions"],
+          {[["home","🏰 Home"],["guides","📖 Guides"],["register","📋 Register"],["tiers","🏆 Divisions"],
             ["bracket","📊 Bracket"],["schedule","📅 Schedule"],["discord","💬 Discord"],
             ["tadmin","⚙️ Admin"],
             ...(loggedInPlayer?[["portal","🎮 My Portal"]]:
@@ -2628,6 +2628,51 @@ export default function App(){
           </div>
           );
         })()}
+
+        {/* ── GUIDES ──────────────────────────────────────────────────────── */}
+        {tab==="guides"&&(
+          <div>
+            <div style={{...S.card,textAlign:"center",border:`2px solid ${C.gold}44`}}>
+              <div style={{fontSize:40,marginBottom:8}}>📖</div>
+              <h2 style={{color:C.gold,fontSize:20,margin:"0 0 8px",letterSpacing:2}}>Guides</h2>
+              <p style={{color:C.dim,fontSize:13,maxWidth:480,margin:"0 auto"}}>
+                Step-by-step PDF guides for both players and tournament hosts — no login required to download.
+              </p>
+            </div>
+
+            <div style={S.grid("1fr 1fr",16)}>
+              <div style={{...S.card,border:`1px solid ${C.gold}44`}}>
+                <div style={S.cardT}>📘 Player Guide</div>
+                <div style={S.row(14,"flex-start")}>
+                  <div style={{fontSize:32}}>📘</div>
+                  <div style={{flex:1}}>
+                    <div style={{color:C.light,fontSize:13,lineHeight:1.6,marginBottom:14}}>
+                      A complete step-by-step guide covering registration, placement matches, setting up game lobbies, reporting results, voting on settings, the Swiss bracket, Top 8 playoff, messaging your opponent, and how to pay your entry fee via PayPal.
+                    </div>
+                    <a href="/AoE2-Guide-Player.pdf" download style={{...S.btn("gold"),display:"inline-block",textDecoration:"none"}}>
+                      ⬇️ Download Player Guide (PDF)
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{...S.card,border:`1px solid ${C.gold}44`}}>
+                <div style={S.cardT}>📗 Discord Server Admin Guide</div>
+                <div style={S.row(14,"flex-start")}>
+                  <div style={{fontSize:32}}>📗</div>
+                  <div style={{flex:1}}>
+                    <div style={{color:C.light,fontSize:13,lineHeight:1.6,marginBottom:14}}>
+                      For tournament hosts — covers season setup, time windows, per-division fees, PayPal/prize configuration, running every phase, and distributing prizes.
+                    </div>
+                    <a href="/AoE2-Guide-ServerAdmin.pdf" download style={{...S.btn("gold"),display:"inline-block",textDecoration:"none"}}>
+                      ⬇️ Download Admin Guide (PDF)
+                    </a>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ── REGISTER ────────────────────────────────────────────────────── */}
         {tab==="register"&&(()=>{
@@ -3096,7 +3141,7 @@ export default function App(){
               <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
                 {[["season","⚙️ Season"],["windows","📅 Time Windows"],["placement","🎮 Placement"],
                   ["tiers","🏅 Tiers"],["players","👥 Players"],["payments","💰 Payments"],
-                  ["reports","🚨 Reports"],["passwords","🔑 Passwords"],["guide","📖 Guide"],
+                  ["reports","🚨 Reports"],["passwords","🔑 Passwords"],
                   ["log","📜 Log"],["danger","⚠️ Data"]
                 ].map(([k,l])=>(
                   <button key={k} style={S.btn(tAdminTab===k?"gold":"stone")} onClick={()=>setTAdminTab(k)}>{l}</button>
@@ -3637,26 +3682,6 @@ export default function App(){
               </div>
             )}
 
-            {/* GUIDE */}
-            {tAdminTab==="guide"&&(
-              <div style={S.card}>
-                <div style={S.cardT}>📖 Admin Guide</div>
-                <p style={{color:C.dim,fontSize:13,marginBottom:16,lineHeight:1.7}}>
-                  A step-by-step PDF guide covering everything from setup to running a full season — registration, time windows, placement matches, settings voting, Swiss rounds, PayPal payments, prize splits, and disputes.
-                </p>
-                <div style={{padding:"16px",background:C.obsidian,borderRadius:6,border:`1px solid ${C.gold}44`,maxWidth:420}}>
-                  <div style={{fontSize:28,marginBottom:8}}>📗</div>
-                  <div style={{color:C.gold,fontWeight:"bold",fontSize:14,marginBottom:6}}>Discord Server Admin Guide</div>
-                  <div style={{color:C.dim,fontSize:12,marginBottom:12,lineHeight:1.6}}>
-                    For you — the tournament host. Covers season setup, PayPal/prize configuration, running every phase, and distributing prizes.
-                  </div>
-                  <a href="/AoE2-Guide-ServerAdmin.pdf" download style={{...S.btn("gold"),display:"inline-block",textDecoration:"none"}}>
-                    ⬇️ Download PDF
-                  </a>
-                </div>
-              </div>
-            )}
-
             {/* LOG — moved here from the public nav so only the admin can view/clear it */}
             {tAdminTab==="log"&&(
               <div style={S.card}>
@@ -3723,22 +3748,6 @@ export default function App(){
 
           return(
             <div>
-              {/* Player guide download — always visible above the portal nav */}
-              <div style={{...S.card,border:`1px solid ${C.gold}44`}}>
-                <div style={S.cardT}>📖 Player Guide</div>
-                <div style={S.row(14,"flex-start")}>
-                  <div style={{fontSize:32}}>📘</div>
-                  <div style={{flex:1}}>
-                    <div style={{color:C.light,fontSize:13,lineHeight:1.6,marginBottom:10}}>
-                      A complete step-by-step guide covering registration, placement matches, setting up game lobbies, reporting results, voting on settings, the Swiss bracket, Top 8 playoff, and how to pay your entry fee via PayPal.
-                    </div>
-                    <a href="/AoE2-Guide-Player.pdf" download style={{...S.btn("gold"),display:"inline-block",textDecoration:"none"}}>
-                      ⬇️ Download Player Guide (PDF)
-                    </a>
-                  </div>
-                </div>
-              </div>
-
               <div style={{display:"flex",gap:8,marginBottom:18,flexWrap:"wrap"}}>
                 {[["dashboard","🏠 Dashboard"],["matches","⚔️ Matches"],["standings","📊 Standings"],["profile","👤 Profile"]].map(([k,l])=>(
                   <button key={k} style={S.btn(portalTab===k?"gold":"stone")} onClick={()=>setPortalTab(k)}>{l}</button>
