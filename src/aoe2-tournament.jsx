@@ -49,6 +49,7 @@ const JSONBIN_BIN = import.meta.env?.VITE_JSONBIN_BIN || null;
 const JSONBIN_URL = JSONBIN_BIN ? `https://api.jsonbin.io/v3/b/${JSONBIN_BIN}` : null;
 
 let _saveDebounce = null;
+let _pendingCloudData = null;
 
 async function cloudLoad() {
   if (!JSONBIN_KEY || !JSONBIN_URL) return null;
@@ -61,21 +62,41 @@ async function cloudLoad() {
   } catch { return null; }
 }
 
-async function cloudSave(data) {
+async function cloudPut(data){
+  try {
+    await fetch(JSONBIN_URL, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", "X-Master-Key": JSONBIN_KEY },
+      body: JSON.stringify(data),
+      keepalive: true, // lets the request finish even if the page is being unloaded
+    });
+  } catch(e) { console.warn("Cloud save failed", e); }
+}
+
+function cloudSave(data) {
   if (!JSONBIN_KEY || !JSONBIN_URL) return;
+  _pendingCloudData = data;
   clearTimeout(_saveDebounce);
-  _saveDebounce = setTimeout(async () => {
-    try {
-      await fetch(JSONBIN_URL, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Master-Key": JSONBIN_KEY,
-        },
-        body: JSON.stringify(data),
-      });
-    } catch(e) { console.warn("Cloud save failed", e); }
-  }, 1500); // debounce 1.5s to avoid hammering API
+  _saveDebounce = setTimeout(() => {
+    const toSend=_pendingCloudData;
+    _pendingCloudData=null;
+    cloudPut(toSend);
+  }, 600); // short debounce to avoid hammering the API while still saving promptly
+}
+
+// Flush any pending cloud save immediately — called on tab close/refresh so a
+// quick refresh right after an edit can't lose that change.
+function flushCloudSave(){
+  if(_pendingCloudData){
+    clearTimeout(_saveDebounce);
+    const toSend=_pendingCloudData;
+    _pendingCloudData=null;
+    cloudPut(toSend);
+  }
+}
+if(typeof window!=="undefined"){
+  window.addEventListener("pagehide",flushCloudSave);
+  window.addEventListener("beforeunload",flushCloudSave);
 }
 const PLACEMENT_GAMES = 5;
 const SWISS_ROUNDS    = 7;
@@ -498,11 +519,19 @@ export default function App(){
     return()=>window.removeEventListener("hashchange",onHash);
   },[]);
 
+  const masterRef=useRef(master);
+  useEffect(()=>{ masterRef.current=master; },[master]);
+
   const saveMaster=useCallback((next)=>{
-    setMaster(next);
-    const s=JSON.stringify(next);
+    // `next` can be either a plain object OR a functional updater (prev=>newState).
+    // We must resolve functions to a real object BEFORE persisting, otherwise
+    // JSON.stringify(function) silently produces `undefined` and corrupts storage.
+    const resolved=typeof next==="function"?next(masterRef.current):next;
+    masterRef.current=resolved;
+    setMaster(resolved);
+    const s=JSON.stringify(resolved);
     // Save to cloud (works across all devices/browsers)
-    cloudSave(next);
+    cloudSave(resolved);
     // Also save locally as fallback
     if(window.storage) window.storage.set(STORAGE_KEY,s).catch(()=>{});
     try{localStorage.setItem(STORAGE_KEY,s);}catch{}
