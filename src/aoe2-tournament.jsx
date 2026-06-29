@@ -727,6 +727,33 @@ export default function App(){
   }
   function logoutPlayer(){setLoggedInPlayer(null);setTab("home");setPortalTab("dashboard");}
 
+  // ── PLAYER SELF-DELETE ────────────────────────────────────────────────────
+  // A player can remove their own registration, but only while it's safe to do so:
+  // not yet classified into a division, and no payment submitted/received.
+  // Once they're in a bracket or have money in flight, only the admin should
+  // handle removal (forfeits, refunds, bracket integrity, etc.).
+  function canPlayerSelfDelete(player){
+    if(!player) return false;
+    if(player.classified) return false;
+    if(player.paymentStatus&&player.paymentStatus!=="none") return false;
+    return true;
+  }
+
+  function playerDeleteOwnAccount(code,playerId){
+    const tour=master.tournaments[code];if(!tour) return;
+    const player=tour.players.find(p=>p.id===playerId);if(!player) return;
+    if(!canPlayerSelfDelete(player)){
+      return toast$("You can't self-delete after being classified or paying — contact the tournament admin.","error");
+    }
+    if(!confirm(`Permanently delete your registration for ${tour.name}? This cannot be undone. You can register again afterward with the same or a different email.`)) return;
+    saveTour(code,t=>({...t,
+      players:t.players.filter(p=>p.id!==playerId),
+      placementMatches:(t.placementMatches||[]).filter(m=>m.p1!==playerId&&m.p2!==playerId),
+    }),`🗑️ ${player.name} deleted their own registration`);
+    toast$("Your registration has been deleted.");
+    logoutPlayer();
+  }
+
   // ── HELPERS ───────────────────────────────────────────────────────────────
   const T=activeTournament; // shorthand
   const tierPs   =(tid)=>T?.players.filter(p=>p.classified&&p.tierId===tid&&!p.banned)||[];
@@ -3785,7 +3812,31 @@ export default function App(){
                       </div>
                     ))}
                   </div>
-                  <div style={{marginTop:20}}><button style={S.btn("red")} onClick={logoutPlayer}>🚪 Log Out</button></div>
+                  <div style={{marginTop:20,display:"flex",gap:10,flexWrap:"wrap"}}>
+                    <button style={S.btn("red")} onClick={logoutPlayer}>🚪 Log Out</button>
+                  </div>
+
+                  {/* Delete registration */}
+                  <div style={{marginTop:20,paddingTop:16,borderTop:`1px solid ${C.stone}`}}>
+                    <div style={{color:C.ember,fontSize:12,letterSpacing:1,textTransform:"uppercase",fontWeight:"bold",marginBottom:8}}>
+                      ⚠️ Danger Zone
+                    </div>
+                    {canPlayerSelfDelete(p)?(
+                      <>
+                        <p style={{color:C.dim,fontSize:12,marginBottom:10,lineHeight:1.6}}>
+                          Permanently delete your registration for this tournament. This removes your account and any scheduled placement matches. You can register again afterward.
+                        </p>
+                        <button style={S.btn("red")} onClick={()=>playerDeleteOwnAccount(T.code,p.id)}>
+                          🗑️ Delete My Registration
+                        </button>
+                      </>
+                    ):(
+                      <p style={{color:C.dim,fontSize:12,lineHeight:1.6}}>
+                        You can't delete your own registration anymore — you've either been classified into a division or have a payment on file.
+                        Contact the tournament admin if you need to withdraw.
+                      </p>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
