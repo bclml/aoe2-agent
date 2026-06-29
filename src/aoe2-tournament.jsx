@@ -245,10 +245,10 @@ function generatePlacementSchedule(players, placementGames, windows, lobbyPrefix
 
 // ── DEFAULT TEMPLATES ──────────────────────────────────────────────────────────
 const DEFAULT_TIERS=[
-  {id:"t1",name:"Bronze",  min:0,    max:499,  color:"#8B7355",icon:"🪨"},
-  {id:"t2",name:"Silver",  min:500,  max:799,  color:"#9A9A9A",icon:"⚔️"},
-  {id:"t3",name:"Gold",    min:800,  max:1099, color:"#C8A84A",icon:"🛡️"},
-  {id:"t4",name:"Diamond", min:1100, max:9999, color:"#6A9ACA",icon:"💎"},
+  {id:"t1",name:"Bronze",  min:0,    max:499,  color:"#8B7355",icon:"🪨",prizeFee:0},
+  {id:"t2",name:"Silver",  min:500,  max:799,  color:"#9A9A9A",icon:"⚔️",prizeFee:5},
+  {id:"t3",name:"Gold",    min:800,  max:1099, color:"#C8A84A",icon:"🛡️",prizeFee:5},
+  {id:"t4",name:"Diamond", min:1100, max:9999, color:"#6A9ACA",icon:"💎",prizeFee:10},
 ];
 const DEFAULT_PLACEMENT_SETTINGS={
   map:"Random Map",resources:"Standard",speed:"Normal",
@@ -275,6 +275,7 @@ function makeTournament(code, name, hostName){
       placementGames:PLACEMENT_GAMES,
       adminFee:5,
       prizeFee:10,
+      kickbackPercent:0,    // % of platform admin fee paid back to this tournament's host — set by platform organiser only
       feeNote:"",
       paymentInfo:"",
       registrationOpen:false,
@@ -289,6 +290,7 @@ function makeTournament(code, name, hostName){
     tournaments:{},
     log:[],
     feeCollected:[],       // [{playerId,name,type,amount,paidAt}] — historical record, never reset
+    kickbackPayouts:[],    // [{id,amount,paidAt,note}] — manual record of kickback paid out to host by platform admin
     createdAt:new Date().toISOString(),
   };
 }
@@ -296,6 +298,7 @@ function makeTournament(code, name, hostName){
 // ── MASTER STATE ───────────────────────────────────────────────────────────────
 const DEFAULT_MASTER={
   tournaments:{},          // code -> Tournament object
+  tournamentRequests:[],   // [{id,email,desiredName,desiredCode,hostName,message,status,createdAt,resolvedAt}]
   superAdminPassword:SUPER_DEFAULT,
   totalAdminFeesCollected:0,
   log:[],
@@ -335,15 +338,17 @@ const S={
 };
 
 // ── LOBBY BOX ──────────────────────────────────────────────────────────────────
-function LobbyBox({match,p1Name,p2Name,settings,isPlacement=false}){
+function LobbyBox({match,p1Name,p2Name,settings,isPlacement=false,maskPassword=false}){
   const [copied,setCopied]=useState("");
+  const [revealed,setRevealed]=useState(false);
   const cp=(text,key)=>{navigator.clipboard.writeText(text);setCopied(key);setTimeout(()=>setCopied(""),2000);};
   if(!match||match.p2==="BYE"||!match.lobbyName||match.lobbyName==="BYE") return null;
   const s=settings||DEFAULT_PLACEMENT_SETTINGS;
+  const showPw=!maskPassword||revealed;
   const info=`🏰 LOBBY: ${match.lobbyName}\n🔑 PASSWORD: ${match.lobbyPw}\n🗺️ Map: ${isPlacement?"Random Map":(match.pickedMap||s.map||"Arabia")}\n⚡ Speed: ${s.speed||"Normal"}\n💰 Resources: ${s.resources||"Standard"}\n⏱️ Spectator delay: ${match.spectatorDelay||10} min minimum\n🎥 Recording: ${match.recordingRequired?"REQUIRED":"Optional"}`;
   return(
     <div style={{background:C.obsidian,border:`2px solid ${C.gold}33`,borderRadius:8,padding:"14px",marginTop:10}}>
-      <div style={{color:C.gold,fontSize:12,fontWeight:"bold",letterSpacing:1,marginBottom:10}}>🏰 GAME LOBBY</div>
+      <div style={{color:C.gold,fontSize:12,fontWeight:"bold",letterSpacing:1,marginBottom:10}}>🏰 GAME LOBBY{maskPassword&&!revealed?" — 🔒 Streaming Privacy":""}</div>
       <div style={S.grid("1fr 1fr",8)}>
         <div>
           <div style={{color:C.dim,fontSize:10,letterSpacing:1,marginBottom:3}}>LOBBY NAME</div>
@@ -355,8 +360,17 @@ function LobbyBox({match,p1Name,p2Name,settings,isPlacement=false}){
         <div>
           <div style={{color:C.dim,fontSize:10,letterSpacing:1,marginBottom:3}}>LOBBY PASSWORD</div>
           <div style={S.row(6)}>
-            <span style={{fontFamily:"monospace",fontSize:13,color:C.gold,background:C.stone,padding:"4px 8px",borderRadius:3}}>{match.lobbyPw}</span>
-            <button onClick={()=>cp(match.lobbyPw,"pw")} style={{...S.btn("stone"),padding:"3px 8px",fontSize:10}}>{copied==="pw"?"✓":"📋"}</button>
+            {showPw?(
+              <>
+                <span style={{fontFamily:"monospace",fontSize:13,color:C.gold,background:C.stone,padding:"4px 8px",borderRadius:3}}>{match.lobbyPw}</span>
+                <button onClick={()=>cp(match.lobbyPw,"pw")} style={{...S.btn("stone"),padding:"3px 8px",fontSize:10}}>{copied==="pw"?"✓":"📋"}</button>
+              </>
+            ):(
+              <>
+                <span style={{fontFamily:"monospace",fontSize:13,color:C.dim,background:C.stone,padding:"4px 8px",borderRadius:3,letterSpacing:2}}>••••••••</span>
+                <button onClick={()=>setRevealed(true)} style={{...S.btn("steel"),padding:"3px 8px",fontSize:10}}>👁️ Reveal</button>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -376,9 +390,11 @@ function LobbyBox({match,p1Name,p2Name,settings,isPlacement=false}){
         Set spectator delay to <strong style={{color:C.gold}}>{match.spectatorDelay||10} minutes minimum</strong>.
         {match.recordingRequired&&<> <strong style={{color:C.gold}}>Both players must record the game.</strong></>}
       </div>
-      <button onClick={()=>cp(info,"full")} style={{...S.btn("gold"),fontSize:10,padding:"5px 12px",marginTop:8}}>
-        {copied==="full"?"✓ Copied!":"📋 Copy Lobby Info"}
-      </button>
+      {showPw&&(
+        <button onClick={()=>cp(info,"full")} style={{...S.btn("gold"),fontSize:10,padding:"5px 12px",marginTop:8}}>
+          {copied==="full"?"✓ Copied!":"📋 Copy Lobby Info"}
+        </button>
+      )}
     </div>
   );
 }
@@ -431,14 +447,18 @@ export default function App(){
 
   // ── MODALS ────────────────────────────────────────────────────────────────
   const [toast,setToast]             = useState(null);
-  const [spectator,setSpectator]     = useState(false);
+  const [streamPrivacy,setStreamPrivacy] = useState(false);
   const [disputeModal,setDisputeModal] = useState(null);
   const [reportModal,setReportModal]   = useState(null);
   const [changePwModal,setChangePwModal] = useState(null);
+  const [kickbackPayoutModal,setKickbackPayoutModal] = useState(null); // {code, suggested}
   const [vetoMatch,setVetoMatch]       = useState(null);
   const [schedModal,setSchedModal]     = useState(null);
   const [newTourModal,setNewTourModal] = useState(false);
-  const [newTourForm,setNewTourForm]   = useState({code:"",name:"",hostName:"",adminPassword:"",adminFee:5});
+  const [contactModal,setContactModal] = useState(false);
+  const [contactForm,setContactForm] = useState({email:"",desiredName:"",desiredCode:"",hostName:"",message:""});
+  const [contactSent,setContactSent] = useState(false);
+  const [newTourForm,setNewTourForm]   = useState({code:"",name:"",hostName:"",adminPassword:"",adminFee:5,kickbackPercent:0});
   const [regForm,setRegForm]           = useState({name:"",discord:"",email:"",password:"",confirmPw:"",civ:CIVS[0],startElo:800,timezone:TIMEZONES[0].value});
   const [showRegPw,setShowRegPw]       = useState(false);
   const [regSuccess,setRegSuccess]     = useState(false);
@@ -521,18 +541,19 @@ export default function App(){
   }
 
   function createTournament(){
-    const{code,name,hostName,adminPassword,adminFee}=newTourForm;
+    const{code,name,hostName,adminPassword,adminFee,kickbackPercent}=newTourForm;
     if(!code.trim()||!name.trim()) return toast$("Code and name required","error");
     const clean=code.trim().toUpperCase().replace(/\s/g,"-");
     if(master.tournaments[clean]) return toast$("Tournament code already exists","error");
     const tour=makeTournament(clean,name,hostName);
     tour.season.adminFee=Number(adminFee)||0;
+    tour.season.kickbackPercent=Number(kickbackPercent)||0;
     if(adminPassword.trim()) tour.adminPassword=pwHash(adminPassword.trim());
     tour.adminPasswordPlain=adminPassword.trim()||"changeme";
     saveMaster(addMasterLog(`✅ Tournament created: ${clean} — ${name}`,
       {...master,tournaments:{...master.tournaments,[clean]:tour}}));
     setNewTourModal(false);
-    setNewTourForm({code:"",name:"",hostName:"",adminPassword:"",adminFee:5});
+    setNewTourForm({code:"",name:"",hostName:"",adminPassword:"",adminFee:5,kickbackPercent:0});
     toast$(`Tournament ${clean} created!`);
   }
 
@@ -541,6 +562,57 @@ export default function App(){
     const{[code]:_,...rest}=master.tournaments;
     saveMaster(addMasterLog(`🗑️ Tournament deleted: ${code}`,{...master,tournaments:rest}));
     toast$(`${code} deleted`);
+  }
+
+  // ── HOST KICKBACK PAYOUTS ─────────────────────────────────────────────────
+  // Platform organiser records a manual payout once they've sent the host
+  // their share of admin fees (e.g. via PayPal to the host's email on file).
+  function markKickbackPaid(code,amount,note){
+    const amt=Number(amount);
+    if(!amt||amt<=0) return toast$("Enter a valid amount","error");
+    saveTour(code,t=>({...t,kickbackPayouts:[...(t.kickbackPayouts||[]),
+      {id:uid(),amount:amt,paidAt:new Date().toISOString(),note:note||""}]}),
+      `💸 Kickback payout recorded: $${amt} to ${master.tournaments[code]?.hostName||code}`);
+    toast$(`$${amt} kickback payout recorded`);
+  }
+
+  function deleteKickbackPayout(code,payoutId){
+    saveTour(code,t=>({...t,kickbackPayouts:(t.kickbackPayouts||[]).filter(p=>p.id!==payoutId)}),
+      `🗑️ Kickback payout entry removed`);
+    toast$("Payout entry removed");
+  }
+
+  // ── TOURNAMENT REQUEST TICKETS ────────────────────────────────────────────
+  // Approving a ticket opens the New Tournament modal prefilled with the
+  // requester's details so the admin can review/adjust before creating it.
+  function approveTicket(ticketId){
+    const ticket=master.tournamentRequests?.find(t=>t.id===ticketId);
+    if(!ticket) return;
+    setNewTourForm({
+      code:ticket.desiredCode||"",
+      name:ticket.desiredName||"",
+      hostName:ticket.hostName||"",
+      adminPassword:"",
+      adminFee:5,
+      kickbackPercent:0,
+    });
+    setNewTourModal(true);
+    saveMaster(prev=>({...prev,tournamentRequests:prev.tournamentRequests.map(t=>
+      t.id!==ticketId?t:{...t,status:"approved",resolvedAt:new Date().toISOString()})}));
+    toast$("Ticket approved — review and create the tournament below");
+  }
+
+  function rejectTicket(ticketId){
+    if(!confirm("Reject this tournament request? The requester won't be notified automatically.")) return;
+    saveMaster(addMasterLog(`🎫 Ticket rejected: ${master.tournamentRequests?.find(t=>t.id===ticketId)?.email}`,
+      {...master,tournamentRequests:master.tournamentRequests.map(t=>
+        t.id!==ticketId?t:{...t,status:"rejected",resolvedAt:new Date().toISOString()})}));
+    toast$("Ticket rejected");
+  }
+
+  function deleteTicket(ticketId){
+    saveMaster({...master,tournamentRequests:master.tournamentRequests.filter(t=>t.id!==ticketId)});
+    toast$("Ticket removed");
   }
 
   // ── TOURNAMENT ADMIN AUTH ─────────────────────────────────────────────────
@@ -627,6 +699,7 @@ export default function App(){
     const tour=master.tournaments[code];if(!tour) return;
     const player=tour.players.find(p=>p.id===playerId);if(!player) return;
     const already=tour.feeCollected?.some(f=>f.playerId===playerId&&f.seasonName===tour.season.name);
+    const playerPrizeFee=getTierPrizeFee(tour,player.tierId);
     saveTour(code,t=>{
       const players=t.players.map(p=>p.id!==playerId?p:{...p,paymentStatus:"received"});
       if(already) return{...t,players};
@@ -634,7 +707,7 @@ export default function App(){
         {id:uid(),playerId,name:player.name,email:player.email,discord:player.discord,
          type:"adminFee",amount:t.season.adminFee||0,paidAt:new Date().toISOString(),seasonName:t.season.name},
         {id:uid(),playerId,name:player.name,email:player.email,discord:player.discord,
-         type:"prizeFee",amount:t.season.prizeFee||0,paidAt:new Date().toISOString(),seasonName:t.season.name},
+         type:"prizeFee",amount:playerPrizeFee,paidAt:new Date().toISOString(),seasonName:t.season.name,tierId:player.tierId},
       ];
       return{...t,players,feeCollected:[...(t.feeCollected||[]),...entries]};
     },`✅ Payment confirmed received for ${player.name}`);
@@ -769,13 +842,13 @@ export default function App(){
   // ── OPEN DIVISION BRACKETS ────────────────────────────────────────────────
   function autoOpenBrackets(code){
     const tour=master.tournaments[code];if(!tour) return;
-    const totalFee=(tour.season.adminFee||0)+(tour.season.prizeFee||0);
-    if(totalFee>0&&!tour.hostEmail?.trim()){
+    const anyTierHasFee=tour.season.tiers.some(t=>getTierTotalFee(tour,t.id)>0);
+    if(anyTierHasFee&&!tour.hostEmail?.trim()){
       return toast$("Add your PayPal email in Admin → Season before launching a paid tournament","error");
     }
-    // Players are eligible if classified, not banned, AND (no fee OR payment received)
+    // Players are eligible if classified, not banned, AND (their tier is free OR payment received)
     const classified=tour.players.filter(p=>p.classified&&!p.banned&&
-      (totalFee===0||p.paymentStatus==="received"));
+      (getTierTotalFee(tour,p.tierId)===0||p.paymentStatus==="received"));
     if(classified.length<2) return toast$("Not enough eligible players (check payment status)","error");
     let newTournaments={...tour.tournaments};let opened=0;
     tour.season.tiers.forEach(tier=>{
@@ -1117,6 +1190,39 @@ export default function App(){
     );
   }
 
+  function KickbackPayoutModal(){
+    if(!kickbackPayoutModal) return null;
+    const[amount,setAmount]=useState(kickbackPayoutModal.suggested?kickbackPayoutModal.suggested.toFixed(2):"");
+    const[note,setNote]=useState("");
+    const tour=master.tournaments[kickbackPayoutModal.code];
+    return(
+      <div style={S.modal}><div style={{...S.card,maxWidth:400,width:"90%"}}>
+        <div style={S.cardT}>💸 Record Kickback Payout</div>
+        <p style={{color:C.dim,fontSize:12,marginBottom:12,lineHeight:1.6}}>
+          Record that you've sent this amount to <strong style={{color:C.gold}}>{tour?.hostName||tour?.name}</strong> (e.g. via PayPal to their email on file). This is a manual log only — it does not send any payment itself.
+        </p>
+        <div style={{marginBottom:12}}>
+          <label style={S.lbl}>Amount Paid ($)</label>
+          <input style={S.inp} type="number" min={0} step="0.01" value={amount} onChange={e=>setAmount(e.target.value)} autoFocus/>
+          {kickbackPayoutModal.suggested>0&&(
+            <div style={{color:C.dim,fontSize:11,marginTop:4}}>Outstanding balance: ${kickbackPayoutModal.suggested.toFixed(2)}</div>
+          )}
+        </div>
+        <div style={{marginBottom:14}}>
+          <label style={S.lbl}>Note (optional)</label>
+          <input style={S.inp} placeholder="e.g. PayPal transaction ID" value={note} onChange={e=>setNote(e.target.value)}/>
+        </div>
+        <div style={S.row(10)}>
+          <button style={S.btn("gold",!amount||Number(amount)<=0)} disabled={!amount||Number(amount)<=0}
+            onClick={()=>{markKickbackPaid(kickbackPayoutModal.code,amount,note);setKickbackPayoutModal(null);}}>
+            Record Payout
+          </button>
+          <button style={S.btn("stone")} onClick={()=>setKickbackPayoutModal(null)}>Cancel</button>
+        </div>
+      </div></div>
+    );
+  }
+
   function ReportModal(){
     if(!reportModal||!T) return null;
     const[reason,setReason]=useState("");
@@ -1144,7 +1250,7 @@ export default function App(){
     const gtz=id=>tour.players.find(p=>p.id===id)?.timezone;
     const done=match.winner!==null&&match.winner!==undefined;
     const settings=tour.tournaments[tierId]?.settings||DEFAULT_PLACEMENT_SETTINGS;
-    const canAdmin=isCurrent&&!done&&match.p2!=="BYE"&&tAdminUnlocked;
+    const canAdmin=isCurrent&&!done&&match.p2!=="BYE"&&tAdminUnlocked&&!streamPrivacy;
     const p1tz=gtz(match.p1),p2tz=gtz(match.p2);
     return(
       <div style={{padding:"12px",borderRadius:6,background:C.obsidian,
@@ -1195,7 +1301,7 @@ export default function App(){
         {done&&<div style={{marginTop:6,fontSize:12,color:C.gold}}>🏆 {gn(match.winner)}{match.adminResolved?<span style={{color:C.ember,fontSize:10}}> (admin)</span>:""}</div>}
         {match.p2==="BYE"&&<div style={{fontSize:12,color:C.dim,marginTop:6}}>BYE</div>}
         {!done&&match.p2!=="BYE"&&(
-          <LobbyBox match={match} p1Name={gn(match.p1)} p2Name={gn(match.p2)} settings={settings}/>
+          <LobbyBox match={match} p1Name={gn(match.p1)} p2Name={gn(match.p2)} settings={settings} maskPassword={streamPrivacy}/>
         )}
       </div>
     );
@@ -1226,8 +1332,10 @@ export default function App(){
       });
     }
     if(bracket.champion) lines.push(`\n👑 **CHAMPION: ${gn(bracket.champion)}**`);
-    const totalFee=(tour.season.adminFee||0)+(tour.season.prizeFee||0);
-    if(totalFee>0) lines.push(`\n💰 Entry: $${totalFee} total (admin $${tour.season.adminFee} + prize $${tour.season.prizeFee})`);
+    const totalFee=getTierTotalFee(tour,tierId);
+    const tierPrizeFee=getTierPrizeFee(tour,tierId);
+    if(totalFee>0) lines.push(`\n💰 Entry: $${totalFee} total (admin $${tour.season.adminFee||0} + prize $${tierPrizeFee})`);
+    else lines.push(`\n🆓 This division is FREE to enter.`);
     return lines.join("\n");
   }
 
@@ -1235,17 +1343,105 @@ export default function App(){
   const baseUrl=`${window.location.origin}${window.location.pathname}`;
   const tourUrl=(code)=>`${baseUrl}#/t/${code}`;
 
+  // ── TOURNAMENT STATUS ─────────────────────────────────────────────────────
+  // Derives a human status from tournament data: upcoming / open / underway / ended
+  // ── PER-TIER PRIZE FEE HELPERS ───────────────────────────────────────────
+  // Each tier can have its own prize fee (0 = free for that division).
+  // Admin fee stays season-wide (set by the platform organiser).
+  function getTierPrizeFee(tour,tierId){
+    const tier=tour?.season?.tiers?.find(t=>t.id===tierId);
+    return tier?.prizeFee??tour?.season?.prizeFee??0;
+  }
+  function getPlayerTotalFee(tour,player){
+    const adminFee=tour?.season?.adminFee||0;
+    const prizeFee=player?.tierId?getTierPrizeFee(tour,player.tierId):(tour?.season?.prizeFee||0);
+    return adminFee+prizeFee;
+  }
+  function getTierTotalFee(tour,tierId){
+    return (tour?.season?.adminFee||0)+getTierPrizeFee(tour,tierId);
+  }
+
+  // ── HOST KICKBACK HELPERS ─────────────────────────────────────────────────
+  // The platform organiser can give a % of collected admin fees back to the
+  // tournament's host, as a thank-you/incentive for running their community.
+  function getKickbackOwed(tour){
+    const pct=tour?.season?.kickbackPercent||0;
+    if(pct<=0) return 0;
+    const totalAdminFees=(tour?.feeCollected||[]).filter(f=>f.type==="adminFee").reduce((s,f)=>s+f.amount,0);
+    return Math.round(totalAdminFees*pct)/100;
+  }
+  function getKickbackPaid(tour){
+    return (tour?.kickbackPayouts||[]).reduce((s,p)=>s+p.amount,0);
+  }
+  function getKickbackOutstanding(tour){
+    return Math.max(0,getKickbackOwed(tour)-getKickbackPaid(tour));
+  }
+
+  function getTourStatus(tour){
+    const brackets=Object.values(tour.tournaments||{});
+    const anyBracketStarted=brackets.length>0;
+    const allBracketsDone=anyBracketStarted&&brackets.every(b=>b.phase==="done");
+    if(allBracketsDone) return{key:"ended",label:"🏁 Ended",color:C.dim};
+    if(anyBracketStarted) return{key:"underway",label:"⚔️ Underway",color:C.gold};
+    if(tour.placementMatches?.length>0) return{key:"underway",label:"⚔️ Underway — Placements",color:C.gold};
+    if(tour.season.registrationOpen) return{key:"open",label:"📋 Open for Registration",color:C.moss};
+    return{key:"upcoming",label:"🕐 Upcoming",color:C.steel};
+  }
+
+  // ── HOST CONTACT FORM ─────────────────────────────────────────────────────
+  // Sends an email to mlandry2011@gmail.com via Formspree (no backend needed).
+  // The sender's email is included as the reply-to and in the message body.
+  // Creates a pending ticket in master.tournamentRequests for the platform admin to review,
+  // AND sends an email alert via Formspree so the admin is notified immediately.
+  async function sendContactRequest(){
+    if(!contactForm.email.trim()||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactForm.email)){
+      return toast$("Enter a valid email address","error");
+    }
+    if(!contactForm.desiredName.trim()) return toast$("Enter a tournament/community name","error");
+    if(!contactForm.message.trim()) return toast$("Enter a message","error");
+
+    const ticket={
+      id:uid(),
+      email:contactForm.email.trim(),
+      desiredName:contactForm.desiredName.trim(),
+      desiredCode:contactForm.desiredCode.trim().toUpperCase().replace(/[^A-Z0-9-]/g,""),
+      hostName:contactForm.hostName.trim(),
+      message:contactForm.message.trim(),
+      status:"pending", // pending | approved | rejected
+      createdAt:new Date().toISOString(),
+      resolvedAt:null,
+    };
+
+    // Save the ticket immediately so it's never lost, even if the email fails
+    saveMaster(addMasterLog(`🎫 New tournament request from ${ticket.email} — "${ticket.desiredName}"`,
+      {...master,tournamentRequests:[...(master.tournamentRequests||[]),ticket]}));
+
+    // Best-effort email alert — ticket is already saved regardless of this outcome
+    try{
+      await fetch("https://formspree.io/f/mjgqkpav",{
+        method:"POST",
+        headers:{"Content-Type":"application/json",Accept:"application/json"},
+        body:JSON.stringify({
+          email:ticket.email,
+          message:`New tournament request ticket!\n\nRequester email: ${ticket.email}\nDesired tournament name: ${ticket.desiredName}\nDesired code: ${ticket.desiredCode||"(not specified)"}\nHost/Discord server name: ${ticket.hostName||"(not specified)"}\n\nMessage:\n${ticket.message}\n\nReview and approve/reject this request in your Platform Admin → Requests tab.`,
+          _subject:"AOE2",
+          _replyto:ticket.email,
+        }),
+      });
+    } catch{
+      // Email alert failed, but the ticket itself is safely saved — admin will still see it in Requests tab
+    }
+
+    setContactSent(true);
+    toast$("Request submitted!");
+  }
+
   // ══════════════════════════════════════════════════════════════════════════
   // RENDER
   // ══════════════════════════════════════════════════════════════════════════
 
   // ── LANDING PAGE ──────────────────────────────────────────────────────────
   if(route.type==="landing"){
-    // Calculate total prize pool across all tournaments (public info)
-    const totalPrizePools=Object.values(master.tournaments).reduce((sum,tour)=>{
-      const paidCount=(tour.feeCollected||[]).filter(f=>f.type==="prizeFee").length;
-      return sum+(paidCount*(tour.season.prizeFee||0));
-    },0);
     return(
       <div style={{minHeight:"100vh",background:`radial-gradient(ellipse at top,#1A0E00,${C.obsidian})`,
         color:C.light,fontFamily:"Georgia,serif",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"40px 20px"}}>
@@ -1262,13 +1458,12 @@ export default function App(){
           <div style={{color:C.gold,fontWeight:"bold",fontSize:14,marginBottom:6}}>
             🏆 Want to host a tournament for your Discord server?
           </div>
-          <div style={{color:C.dim,fontSize:13,lineHeight:1.6}}>
-            Contact us at{" "}
-            <a href="mailto:mlandry2011@gmail.com?subject=AOE2" style={{color:C.gold}}>
-              mlandry2011@gmail.com
-            </a>
-            {" "}with subject line <strong style={{color:C.light}}>AOE2</strong>
+          <div style={{color:C.dim,fontSize:13,lineHeight:1.6,marginBottom:10}}>
+            Submit a request and we'll review it and follow up by email.
           </div>
+          <button onClick={()=>{setContactModal(true);setContactSent(false);}} style={{...S.btn("gold"),fontSize:12}}>
+            🎫 Request a Tournament
+          </button>
         </div>
         <div style={{display:"flex",gap:12,flexWrap:"wrap",justifyContent:"center",marginBottom:40}}>
           <a href="#/admin" style={{...S.btn("stone"),textDecoration:"none",display:"inline-block",fontSize:11}}>
@@ -1283,19 +1478,23 @@ export default function App(){
             <div style={S.grid("1fr 1fr",12)}>
               {Object.values(master.tournaments).map(tour=>{
                 const tourPrizePaid=(tour.feeCollected||[]).filter(f=>f.type==="prizeFee").reduce((s,f)=>s+f.amount,0);
+                const status=getTourStatus(tour);
                 return(
                   <a key={tour.code} href={`#/t/${tour.code}`} style={{
                     ...S.card,textDecoration:"none",color:C.light,
                     border:`1px solid ${C.gold}44`,cursor:"pointer",
                     transition:"border-color .2s",display:"block",marginBottom:0,
                   }}>
-                    <div style={{color:C.gold,fontSize:16,fontWeight:"bold",marginBottom:4}}>{tour.name}</div>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8,marginBottom:4}}>
+                      <div style={{color:C.gold,fontSize:16,fontWeight:"bold"}}>{tour.name}</div>
+                      <span style={S.badge(status.color)}>{status.label}</span>
+                    </div>
                     <div style={{color:C.dim,fontSize:12,marginBottom:8}}>{tour.season.name} · {tour.hostName||"Community"}</div>
                     <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
                       <span style={S.badge(C.teal)}>⚔️ {tour.players.filter(p=>!p.banned).length} players</span>
                       <span style={S.badge(C.gold)}>🏅 {tour.season.tiers.length} divisions</span>
-                      {(tour.season.prizeFee||0)>0&&(
-                        <span style={S.badge(C.moss)}>🏆 $${tourPrizePaid} prize pool</span>
+                      {tour.season.tiers.some(t=>(t.prizeFee??tour.season.prizeFee??0)>0)&&(
+                        <span style={S.badge(C.moss)}>🏆 ${tourPrizePaid} prize pool</span>
                       )}
                     </div>
                     <div style={{color:C.teal,fontSize:11,marginTop:10}}>{tourUrl(tour.code)}</div>
@@ -1309,6 +1508,66 @@ export default function App(){
           <div style={{position:"fixed",top:16,right:16,zIndex:400,padding:"12px 20px",borderRadius:6,
             fontSize:13,fontWeight:"bold",background:toast.type==="error"?C.ember:C.moss,color:C.light}}>
             {toast.msg}
+          </div>
+        )}
+
+        {/* Contact modal */}
+        {contactModal&&(
+          <div style={S.modal}>
+            <div style={{...S.card,maxWidth:480,width:"90%",maxHeight:"85vh",overflowY:"auto"}}>
+              {contactSent?(
+                <div style={{textAlign:"center"}}>
+                  <div style={{fontSize:40,marginBottom:10}}>✅</div>
+                  <div style={{color:C.gold,fontWeight:"bold",fontSize:16,marginBottom:8}}>Request Submitted!</div>
+                  <p style={{color:C.dim,fontSize:13,marginBottom:16}}>
+                    Your tournament request has been received and is pending review. We'll get back to you at {contactForm.email}.
+                  </p>
+                  <button style={S.btn("gold")} onClick={()=>{setContactModal(false);setContactForm({email:"",desiredName:"",desiredCode:"",hostName:"",message:""});}}>Close</button>
+                </div>
+              ):(
+                <>
+                  <div style={S.cardT}>🎫 Request a Tournament</div>
+                  <p style={{color:C.dim,fontSize:12,marginBottom:14,lineHeight:1.6}}>
+                    Submit a request to host a tournament for your Discord community. We'll review it and follow up by email.
+                  </p>
+                  <div style={{marginBottom:12}}>
+                    <label style={S.lbl}>Your Email Address</label>
+                    <input style={S.inp} type="email" placeholder="your@email.com"
+                      value={contactForm.email} onChange={e=>setContactForm(f=>({...f,email:e.target.value}))}/>
+                  </div>
+                  <div style={S.grid("1fr 1fr",10)}>
+                    <div>
+                      <label style={S.lbl}>Desired Tournament Name</label>
+                      <input style={S.inp} placeholder="e.g. North America Kings"
+                        value={contactForm.desiredName} onChange={e=>setContactForm(f=>({...f,desiredName:e.target.value}))}/>
+                    </div>
+                    <div>
+                      <label style={S.lbl}>Desired Code (optional)</label>
+                      <input style={S.inp} placeholder="e.g. NA-KINGS"
+                        value={contactForm.desiredCode} onChange={e=>setContactForm(f=>({...f,desiredCode:e.target.value.toUpperCase()}))}/>
+                    </div>
+                  </div>
+                  <div style={{marginTop:12,marginBottom:12}}>
+                    <label style={S.lbl}>Discord Server / Community Name</label>
+                    <input style={S.inp} placeholder="e.g. NA AoE2 Community"
+                      value={contactForm.hostName} onChange={e=>setContactForm(f=>({...f,hostName:e.target.value}))}/>
+                  </div>
+                  <div style={{marginBottom:14}}>
+                    <label style={S.lbl}>Message</label>
+                    <textarea style={{...S.inp,minHeight:100,resize:"vertical",lineHeight:1.6}}
+                      placeholder="Tell us about your Discord community and what you're looking for..."
+                      value={contactForm.message} onChange={e=>setContactForm(f=>({...f,message:e.target.value}))}/>
+                  </div>
+                  <div style={{color:C.dim,fontSize:11,marginBottom:14}}>
+                    This will be submitted as a request for review, and an email alert with subject line <strong style={{color:C.light}}>AOE2</strong> will be sent including your address so we can reply.
+                  </div>
+                  <div style={S.row(10)}>
+                    <button style={S.btn("gold")} onClick={sendContactRequest}>Submit Request</button>
+                    <button style={S.btn("stone")} onClick={()=>setContactModal(false)}>Cancel</button>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -1347,11 +1606,14 @@ export default function App(){
         ):(
           <div style={{maxWidth:1100,margin:"0 auto",padding:"24px 16px"}}>
             <div style={{display:"flex",gap:8,marginBottom:20,flexWrap:"wrap",alignItems:"center"}}>
-              {[["dashboard","📊 Dashboard"],["tournaments","🏆 Tournaments"],["fees","💰 Fees"],["settings","⚙️ Settings"],["log","📜 Log"]].map(([k,l])=>(
+              {[["dashboard","📊 Dashboard"],["requests",`🎫 Requests${(master.tournamentRequests||[]).filter(t=>t.status==="pending").length>0?` (${(master.tournamentRequests||[]).filter(t=>t.status==="pending").length})`:""}`],["tournaments","🏆 Tournaments"],["fees","💰 Fees"],["settings","⚙️ Settings"],["log","📜 Log"]].map(([k,l])=>(
                 <button key={k} style={S.btn(superTab===k?"gold":"stone")} onClick={()=>setSuperTab(k)}>{l}</button>
               ))}
               <div style={{flex:1}}/>
-              <button style={S.btn("green")} onClick={()=>setNewTourModal(true)}>+ New Tournament</button>
+              <button style={S.btn("green")} onClick={()=>{
+                setNewTourForm({code:"",name:"",hostName:"",adminPassword:"",adminFee:5,kickbackPercent:0});
+                setNewTourModal(true);
+              }}>+ New Tournament</button>
               <button style={{...S.btn("stone"),fontSize:11}} onClick={()=>setSuperUnlocked(false)}>🔒 Lock</button>
             </div>
 
@@ -1361,17 +1623,21 @@ export default function App(){
                 s+(t.feeCollected||[]).filter(f=>f.type==="adminFee").reduce((ss,f)=>ss+f.amount,0),0);
               const totalPrizePools=Object.values(master.tournaments).reduce((s,t)=>
                 s+(t.feeCollected||[]).filter(f=>f.type==="prizeFee").reduce((ss,f)=>ss+f.amount,0),0);
+              const pendingRequests=(master.tournamentRequests||[]).filter(t=>t.status==="pending").length;
               return(
               <div>
-                <div style={S.grid("repeat(5,1fr)",14)}>
+                <div style={S.grid("repeat(6,1fr)",14)}>
                   {[
-                    ["🏆",Object.keys(master.tournaments).length,"Tournaments"],
-                    ["👥",Object.values(master.tournaments).reduce((s,t)=>s+t.players.filter(p=>!p.banned).length,0),"Total Players"],
-                    ["🏆",`$${totalPrizePools}`,"Total Prize Pools"],
-                    ["💰",`$${totalAdminFees}`,"Your Profit (private)"],
-                    ["⚠️",Object.values(master.tournaments).reduce((s,t)=>s+(t.placementMatches||[]).filter(m=>m.disputed&&!m.reported).length+Object.values(t.tournaments||{}).reduce((ss,b)=>ss+(b.swissRounds||[]).flatMap(r=>r).filter(m=>m.disputed&&!m.reported).length,0),0),"Open Disputes"],
-                  ].map(([icon,val,label])=>(
-                    <div key={label} style={{...S.card,textAlign:"center",marginBottom:0}}>
+                    ["🏆",Object.keys(master.tournaments).length,"Tournaments",null],
+                    ["🎫",pendingRequests,"Pending Requests","requests"],
+                    ["👥",Object.values(master.tournaments).reduce((s,t)=>s+t.players.filter(p=>!p.banned).length,0),"Total Players",null],
+                    ["🏆",`$${totalPrizePools}`,"Total Prize Pools",null],
+                    ["💰",`$${totalAdminFees}`,"Your Profit (private)",null],
+                    ["⚠️",Object.values(master.tournaments).reduce((s,t)=>s+(t.placementMatches||[]).filter(m=>m.disputed&&!m.reported).length+Object.values(t.tournaments||{}).reduce((ss,b)=>ss+(b.swissRounds||[]).flatMap(r=>r).filter(m=>m.disputed&&!m.reported).length,0),0),"Open Disputes",null],
+                  ].map(([icon,val,label,jumpTo])=>(
+                    <div key={label} onClick={jumpTo?()=>setSuperTab(jumpTo):undefined}
+                      style={{...S.card,textAlign:"center",marginBottom:0,cursor:jumpTo?"pointer":"default",
+                        border:jumpTo&&pendingRequests>0?`1px solid ${C.gold}66`:undefined}}>
                       <div style={{fontSize:24,marginBottom:4}}>{icon}</div>
                       <div style={{color:C.gold,fontSize:20,fontWeight:"bold"}}>{val}</div>
                       <div style={{color:C.dim,fontSize:10,marginTop:2}}>{label}</div>
@@ -1401,6 +1667,71 @@ export default function App(){
                       </div>
                     </div>
                   ))}
+                </div>
+              </div>
+              );
+            })()}
+
+            {/* REQUESTS */}
+            {superTab==="requests"&&(()=>{
+              const requests=[...(master.tournamentRequests||[])].sort((a,b)=>
+                new Date(b.createdAt)-new Date(a.createdAt));
+              const pending=requests.filter(t=>t.status==="pending");
+              const resolved=requests.filter(t=>t.status!=="pending");
+              return(
+              <div>
+                <div style={S.card}>
+                  <div style={S.cardT}>🎫 Tournament Requests
+                    <span style={{...S.badge(C.gold),marginLeft:10,fontSize:11}}>{pending.length} pending</span>
+                  </div>
+                  {requests.length===0&&<p style={{color:C.dim}}>No requests yet. They'll appear here when someone submits the "Request a Tournament" form on the landing page.</p>}
+
+                  {pending.length>0&&(
+                    <div style={{marginBottom:20}}>
+                      <div style={{color:C.gold,fontSize:12,letterSpacing:1,textTransform:"uppercase",marginBottom:10}}>Pending Review</div>
+                      {pending.map(t=>(
+                        <div key={t.id} style={{padding:"14px",borderRadius:6,background:C.gold+"0F",
+                          border:`1px solid ${C.gold}44`,marginBottom:10}}>
+                          <div style={{...S.row(10,"flex-start"),flexWrap:"wrap",marginBottom:8}}>
+                            <div style={{flex:1}}>
+                              <div style={{color:C.gold,fontWeight:"bold",fontSize:15}}>{t.desiredName}</div>
+                              <div style={{color:C.dim,fontSize:12,marginTop:2}}>
+                                {t.email} {t.hostName&&`· ${t.hostName}`} {t.desiredCode&&`· Code: ${t.desiredCode}`}
+                              </div>
+                              <div style={{color:C.dim,fontSize:11,marginTop:2}}>{new Date(t.createdAt).toLocaleString()}</div>
+                            </div>
+                            <div style={S.row(8)}>
+                              <button style={S.btn("green")} onClick={()=>approveTicket(t.id)}>✓ Approve</button>
+                              <button style={S.btn("red")} onClick={()=>rejectTicket(t.id)}>✕ Reject</button>
+                            </div>
+                          </div>
+                          <div style={{color:C.light,fontSize:13,lineHeight:1.6,padding:"10px",background:C.obsidian,borderRadius:4}}>
+                            {t.message}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {resolved.length>0&&(
+                    <div>
+                      <div style={{color:C.dim,fontSize:12,letterSpacing:1,textTransform:"uppercase",marginBottom:10}}>Resolved</div>
+                      {resolved.map(t=>(
+                        <div key={t.id} style={{...S.row(10),padding:"10px 12px",borderRadius:6,
+                          background:C.obsidian,border:`1px solid ${C.stone}`,marginBottom:6,flexWrap:"wrap"}}>
+                          <span style={S.badge(t.status==="approved"?C.moss:C.ember)}>
+                            {t.status==="approved"?"✓ Approved":"✕ Rejected"}
+                          </span>
+                          <div style={{flex:1,minWidth:160}}>
+                            <div style={{fontSize:13,fontWeight:"bold"}}>{t.desiredName}</div>
+                            <div style={{color:C.dim,fontSize:11}}>{t.email}</div>
+                          </div>
+                          <span style={{color:C.dim,fontSize:11}}>{new Date(t.resolvedAt||t.createdAt).toLocaleDateString()}</span>
+                          <button style={{...S.btn("stone"),fontSize:10,padding:"4px 8px"}} onClick={()=>deleteTicket(t.id)}>🗑️</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
               );
@@ -1465,6 +1796,65 @@ export default function App(){
                         <div style={{color:C.dim,fontSize:10,marginTop:4}}>Only you (super admin) can change this.</div>
                       </div>
                     </div>
+
+                    {/* Host kickback */}
+                    {(()=>{
+                      const owed=getKickbackOwed(tour);
+                      const paid=getKickbackPaid(tour);
+                      const outstanding=getKickbackOutstanding(tour);
+                      return(
+                        <div style={{marginTop:10,padding:"12px",background:C.purple+"14",border:`1px solid ${C.purple}44`,borderRadius:6}}>
+                          <div style={{color:C.purple,fontSize:11,letterSpacing:1,textTransform:"uppercase",marginBottom:8,fontWeight:"bold"}}>
+                            💸 Host Kickback — Profit Share
+                          </div>
+                          <div style={S.grid("1fr 1fr 1fr 1fr",10)}>
+                            <div>
+                              <label style={S.lbl}>Kickback %</label>
+                              <input type="number" min={0} max={100} defaultValue={tour.season.kickbackPercent||0}
+                                style={{...S.inp,padding:"6px 8px",fontSize:12}}
+                                onBlur={e=>{
+                                  const v=Number(e.target.value)||0;
+                                  saveTour(tour.code,t=>({...t,season:{...t.season,kickbackPercent:v}}),`💸 Kickback % updated to ${v}%`);
+                                  toast$(`Kickback set to ${v}%`);
+                                }}/>
+                            </div>
+                            <div>
+                              <div style={{color:C.dim,fontSize:10,marginBottom:5}}>OWED TOTAL</div>
+                              <div style={{color:C.gold,fontSize:15,fontWeight:"bold"}}>${owed.toFixed(2)}</div>
+                            </div>
+                            <div>
+                              <div style={{color:C.dim,fontSize:10,marginBottom:5}}>PAID SO FAR</div>
+                              <div style={{color:C.moss,fontSize:15,fontWeight:"bold"}}>${paid.toFixed(2)}</div>
+                            </div>
+                            <div>
+                              <div style={{color:C.dim,fontSize:10,marginBottom:5}}>OUTSTANDING</div>
+                              <div style={{color:outstanding>0?C.ember:C.dim,fontSize:15,fontWeight:"bold"}}>${outstanding.toFixed(2)}</div>
+                            </div>
+                          </div>
+                          {outstanding>0&&(
+                            <button style={{...S.btn("purple"),marginTop:10,fontSize:11}}
+                              onClick={()=>setKickbackPayoutModal({code:tour.code,suggested:outstanding})}>
+                              💸 Record Payout to Host
+                            </button>
+                          )}
+                          {(tour.kickbackPayouts||[]).length>0&&(
+                            <div style={{marginTop:10}}>
+                              <div style={{color:C.dim,fontSize:10,letterSpacing:1,marginBottom:4}}>PAYOUT HISTORY</div>
+                              {tour.kickbackPayouts.map(p=>(
+                                <div key={p.id} style={{...S.row(8),fontSize:11,padding:"4px 0",color:C.dim}}>
+                                  <span style={{color:C.light,fontWeight:"bold"}}>${p.amount.toFixed(2)}</span>
+                                  <span>{new Date(p.paidAt).toLocaleDateString()}</span>
+                                  {p.note&&<span>· {p.note}</span>}
+                                  <span style={{flex:1}}/>
+                                  <button style={{...S.btn("stone"),fontSize:9,padding:"2px 6px"}}
+                                    onClick={()=>deleteKickbackPayout(tour.code,p.id)}>✕</button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 ))}
               </div>
@@ -1476,6 +1866,9 @@ export default function App(){
                 s+(t.feeCollected||[]).filter(f=>f.type==="adminFee").reduce((ss,f)=>ss+f.amount,0),0);
               const totalPrizeFees=Object.values(master.tournaments).reduce((s,t)=>
                 s+(t.feeCollected||[]).filter(f=>f.type==="prizeFee").reduce((ss,f)=>ss+f.amount,0),0);
+              const totalKickbackOwed=Object.values(master.tournaments).reduce((s,t)=>s+getKickbackOwed(t),0);
+              const totalKickbackPaid=Object.values(master.tournaments).reduce((s,t)=>s+getKickbackPaid(t),0);
+              const netProfit=totalAdminFees-totalKickbackOwed;
               return(
               <div>
                 <div style={S.card}>
@@ -1484,11 +1877,23 @@ export default function App(){
                     padding:"10px 14px",marginBottom:16,fontSize:12,color:C.light}}>
                     🔒 This data is only visible behind your super admin password. Tournament admins and players never see your profit figures.
                   </div>
-                  <div style={{...S.grid("1fr 1fr 1fr",14),marginBottom:20}}>
+                  <div style={{...S.grid("1fr 1fr 1fr",14),marginBottom:14}}>
                     {[
-                      ["Your Total Admin Fee Profit",`$${totalAdminFees}`,C.gold],
+                      ["Gross Admin Fee Revenue",`$${totalAdminFees}`,C.gold],
                       ["Total Prize Fees (hosts' money)",`$${totalPrizeFees}`,C.moss],
                       ["Tournaments with Fees",Object.values(master.tournaments).filter(t=>(t.season.adminFee||0)>0).length,C.teal],
+                    ].map(([label,val,color])=>(
+                      <div key={label} style={{padding:"14px",background:C.obsidian,borderRadius:6,border:`1px solid ${color}44`}}>
+                        <div style={{color,fontSize:22,fontWeight:"bold"}}>{val}</div>
+                        <div style={{color:C.dim,fontSize:11,marginTop:4}}>{label}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{...S.grid("1fr 1fr 1fr",14),marginBottom:20}}>
+                    {[
+                      ["Kickback Owed to Hosts",`$${totalKickbackOwed.toFixed(2)}`,C.purple],
+                      ["Kickback Paid Out",`$${totalKickbackPaid.toFixed(2)}`,C.moss],
+                      ["Your Net Profit (after kickback)",`$${netProfit.toFixed(2)}`,C.gold],
                     ].map(([label,val,color])=>(
                       <div key={label} style={{padding:"14px",background:C.obsidian,borderRadius:6,border:`1px solid ${color}44`}}>
                         <div style={{color,fontSize:22,fontWeight:"bold"}}>{val}</div>
@@ -1499,12 +1904,20 @@ export default function App(){
                   {Object.values(master.tournaments).map(tour=>{
                     const tourAdminTotal=(tour.feeCollected||[]).filter(f=>f.type==="adminFee").reduce((s,f)=>s+f.amount,0);
                     const tourPrizeTotal=(tour.feeCollected||[]).filter(f=>f.type==="prizeFee").reduce((s,f)=>s+f.amount,0);
+                    const tourKickbackOwed=getKickbackOwed(tour);
+                    const tourKickbackOutstanding=getKickbackOutstanding(tour);
                     return(
                     <div key={tour.code} style={{marginBottom:20}}>
-                      <div style={{...S.row(10),marginBottom:8}}>
+                      <div style={{...S.row(10),marginBottom:8,flexWrap:"wrap"}}>
                         <span style={{color:C.gold,fontWeight:"bold"}}>{tour.name} ({tour.code})</span>
                         <span style={S.badge(C.gold)}>${tourAdminTotal} your profit</span>
                         <span style={S.badge(C.moss)}>${tourPrizeTotal} prize pool</span>
+                        {tour.season.kickbackPercent>0&&(
+                          <span style={S.badge(C.purple)}>
+                            💸 {tour.season.kickbackPercent}% kickback — ${tourKickbackOwed.toFixed(2)} owed
+                            {tourKickbackOutstanding>0?` ($${tourKickbackOutstanding.toFixed(2)} unpaid)`:" (paid in full)"}
+                          </span>
+                        )}
                       </div>
                       {(tour.feeCollected||[]).length===0
                         ?<div style={{color:C.dim,fontSize:12}}>No fees collected yet</div>
@@ -1644,6 +2057,12 @@ export default function App(){
                     onChange={e=>setNewTourForm(f=>({...f,adminFee:e.target.value}))}/>
                   <div style={{color:C.dim,fontSize:10,marginTop:3}}>This is your cut per player. Only you can set this.</div>
                 </div>
+                <div>
+                  <label style={S.lbl}>Host Kickback (% of admin fee)</label>
+                  <input style={S.inp} type="number" min={0} max={100} value={newTourForm.kickbackPercent}
+                    onChange={e=>setNewTourForm(f=>({...f,kickbackPercent:e.target.value}))}/>
+                  <div style={{color:C.dim,fontSize:10,marginTop:3}}>% of your admin fee paid back to this host as a hosting bonus. 0 = none.</div>
+                </div>
                 </div>
               {newTourForm.code&&(
                 <div style={{color:C.teal,fontSize:12,marginTop:8}}>
@@ -1665,6 +2084,7 @@ export default function App(){
           </div>
         )}
         <ChangePwModal/>
+        <KickbackPayoutModal/>
       </div>
     );
   }
@@ -1721,8 +2141,9 @@ export default function App(){
           ):(
             <button onClick={()=>setTab("login")} style={{...S.btn("gold"),fontSize:11}}>🔑 Player Login</button>
           )}
-          <button onClick={()=>setSpectator(s=>!s)} style={{...S.btn(spectator?"gold":"stone"),fontSize:10,padding:"5px 10px"}}>
-            {spectator?"👁️ ON":"👁️ Spectator"}
+          <button onClick={()=>setStreamPrivacy(s=>!s)} style={{...S.btn(streamPrivacy?"gold":"stone"),fontSize:10,padding:"5px 10px"}}
+            title="Hides lobby passwords and admin report buttons — safe for screen sharing or streaming">
+            {streamPrivacy?"🔒 Streaming Privacy ON":"📺 Streaming Privacy"}
           </button>
           <a href="#/" style={{...S.btn("stone"),fontSize:10,padding:"5px 10px",textDecoration:"none"}}>⚔️ All Tournaments</a>
         </div>
@@ -1760,8 +2181,11 @@ export default function App(){
 
         {/* ── HOME ────────────────────────────────────────────────────────── */}
         {tab==="home"&&(()=>{
-          const totalFee=(T.season.adminFee||0)+(T.season.prizeFee||0);
-          const totalPrizePool=T.players.filter(p=>p.paymentStatus==="received"&&!p.banned).length*(T.season.prizeFee||0);
+          const anyFee=T.season.tiers.some(t=>getTierTotalFee(T,t.id)>0);
+          const totalPrizePool=T.season.tiers.reduce((sum,t)=>{
+            const paidInTier=T.players.filter(p=>p.tierId===t.id&&p.paymentStatus==="received"&&!p.banned).length;
+            return sum+paidInTier*getTierPrizeFee(T,t.id);
+          },0);
           return(
           <div>
             <div style={{...S.card,textAlign:"center",border:`2px solid ${C.gold}44`}}>
@@ -1770,9 +2194,9 @@ export default function App(){
               <p style={{color:C.dim,fontSize:13,maxWidth:500,margin:"0 auto 16px",lineHeight:1.7}}>
                 {T.season.name} · Hosted by {T.hostName||"Community"}
               </p>
-              {totalFee>0&&(
-                <div style={{...S.badge(C.gold),fontSize:13,padding:"6px 16px",margin:"0 auto 10px"}}>
-                  💰 Entry Fee: ${totalFee}
+              {anyFee&&(
+                <div style={{...S.badge(C.gold),fontSize:12,padding:"6px 16px",margin:"0 auto 10px"}}>
+                  💰 Entry fee varies by division — see below
                 </div>
               )}
               {totalPrizePool>0&&(
@@ -1791,7 +2215,9 @@ export default function App(){
               <div style={S.grid("repeat(2,1fr)",12)}>
                 {T.season.tiers.map(t=>{
                   const tierPaid=T.players.filter(p=>p.tierId===t.id&&p.paymentStatus==="received"&&!p.banned).length;
-                  const tierPrize=tierPaid*(T.season.prizeFee||0);
+                  const tierFee=getTierTotalFee(T,t.id);
+                  const tierPrizeFee=getTierPrizeFee(T,t.id);
+                  const tierPrize=tierPaid*tierPrizeFee;
                   return(
                     <div key={t.id} style={{padding:"14px",borderRadius:6,background:t.color+"18",border:`1px solid ${t.color}44`}}>
                       <div style={{fontSize:26,marginBottom:4}}>{t.icon}</div>
@@ -1799,6 +2225,11 @@ export default function App(){
                       <div style={{color:C.dim,fontSize:12,marginTop:2}}>{t.min}–{t.max===9999?"∞":t.max} ELO</div>
                       <div style={{color:C.light,fontSize:12,marginTop:6,fontWeight:"bold"}}>
                         {T.players.filter(p=>p.classified&&p.tierId===t.id&&!p.banned).length} classified
+                      </div>
+                      <div style={{marginTop:6}}>
+                        {tierFee>0
+                          ?<span style={S.badge(C.gold)}>${tierFee} entry</span>
+                          :<span style={S.badge(C.moss)}>🆓 Free</span>}
                       </div>
                       {tierPrize>0&&(
                         <div style={{color:C.moss,fontSize:13,marginTop:4,fontWeight:"bold"}}>
@@ -1840,7 +2271,9 @@ export default function App(){
         })()}
 
         {/* ── REGISTER ────────────────────────────────────────────────────── */}
-        {tab==="register"&&(
+        {tab==="register"&&(()=>{
+          const anyFee=T.season.tiers.some(t=>getTierTotalFee(T,t.id)>0);
+          return(
           <div style={{maxWidth:600,margin:"0 auto"}}>
             {regSuccess?(
               <div style={{...S.card,textAlign:"center"}}>
@@ -1848,8 +2281,7 @@ export default function App(){
                 <div style={{color:C.gold,fontSize:20,fontWeight:"bold",marginBottom:8}}>Registered!</div>
                 <p style={{color:C.dim,fontSize:13,lineHeight:1.7,marginBottom:20}}>
                   Your account is created. Log in to see your placement match schedule.
-                  {T.season.entryFee>0||((T.season.adminFee||0)+(T.season.prizeFee||0)>0)
-                    ?` Entry fee: $${(T.season.adminFee||0)+(T.season.prizeFee||0)} — contact the organiser to pay.`:""}
+                  {anyFee?" Once you're classified into a division, your entry fee (if any) will be shown in your portal.":""}
                 </p>
                 <div style={S.row(10,"center")}>
                   <button style={S.btn("gold")} onClick={()=>{setRegSuccess(false);setTab("login");}}>🔑 Log In</button>
@@ -1859,12 +2291,21 @@ export default function App(){
             ):(
               <div style={S.card}>
                 <div style={S.cardT}>📋 Register for {T.name}</div>
-                {(T.season.adminFee||0)+(T.season.prizeFee||0)>0&&(
+                {anyFee&&(
                   <div style={{background:C.gold+"18",border:`1px solid ${C.gold}44`,borderRadius:6,padding:"12px",marginBottom:16,fontSize:13,lineHeight:1.6}}>
-                    💰 <strong style={{color:C.gold}}>Entry Fee: ${(T.season.adminFee||0)+(T.season.prizeFee||0)}</strong>
-                    {" "}(${T.season.adminFee||0} platform fee + ${T.season.prizeFee||0} prize pool)
-                    {" — "}Placement games are always free.
-                    {T.season.paymentInfo&&<><br/><span style={{color:C.dim}}>Payment: {T.season.paymentInfo}</span></>}
+                    💰 <strong style={{color:C.gold}}>Entry fee varies by division:</strong>
+                    <div style={{marginTop:8,display:"flex",flexWrap:"wrap",gap:8}}>
+                      {T.season.tiers.map(t=>{
+                        const fee=getTierTotalFee(T,t.id);
+                        return(
+                          <span key={t.id} style={S.badge(fee>0?C.gold:C.moss)}>
+                            {t.icon} {t.name}: {fee>0?`$${fee}`:"Free"}
+                          </span>
+                        );
+                      })}
+                    </div>
+                    <div style={{marginTop:8}}>Placement games are always free, regardless of division.</div>
+                    {T.season.paymentInfo&&<div style={{marginTop:6,color:C.dim}}>Payment: {T.season.paymentInfo}</div>}
                   </div>
                 )}
                 <div style={S.grid("1fr 1fr",14)}>
@@ -1897,7 +2338,8 @@ export default function App(){
               </div>
             )}
           </div>
-        )}
+          );
+        })()}
 
         {/* ── LOGIN ───────────────────────────────────────────────────────── */}
         {tab==="login"&&(
@@ -2238,8 +2680,12 @@ export default function App(){
             <div style={S.card}>
               <div style={S.cardT}>📣 Announcement</div>
               {(()=>{
-                const totalFee=(T.season.adminFee||0)+(T.season.prizeFee||0);
-                const text=`@everyone\n\n⚔️ **${T.name} — ${T.season.name}**\n\n🏰 Register at: ${tourUrl(T.code)}\n🆓 ${T.season.placementGames} free placement games → auto-scheduled\n🎮 Players self-report results — no scheduling needed\n🏆 ${T.season.swissRounds}-round Swiss → Top ${T.season.top8Cut} playoff per division\n${totalFee>0?`💰 Entry: $${totalFee} ($${T.season.adminFee||0} platform + $${T.season.prizeFee||0} prize pool)\n`:""}\n**Divisions:**\n${T.season.tiers.map(t=>`${t.icon} **${t.name}**: ${t.min}–${t.max===9999?"∞":t.max} ELO`).join("\n")}\n${T.season.paymentInfo?`\n💰 Payment: ${T.season.paymentInfo}`:""}\n🌍 All timezones welcome · Games played on weekends`;
+                const anyFee=T.season.tiers.some(t=>getTierTotalFee(T,t.id)>0);
+                const divisionLines=T.season.tiers.map(t=>{
+                  const fee=getTierTotalFee(T,t.id);
+                  return `${t.icon} **${t.name}**: ${t.min}–${t.max===9999?"∞":t.max} ELO${fee>0?` · $${fee} entry`:" · Free"}`;
+                }).join("\n");
+                const text=`@everyone\n\n⚔️ **${T.name} — ${T.season.name}**\n\n🏰 Register at: ${tourUrl(T.code)}\n🆓 ${T.season.placementGames} free placement games → auto-scheduled\n🎮 Players self-report results — no scheduling needed\n🏆 ${T.season.swissRounds}-round Swiss → Top ${T.season.top8Cut} playoff per division\n${anyFee?`💰 Entry fee varies by division (see below) — placement games are always free\n`:""}\n**Divisions:**\n${divisionLines}\n${T.season.paymentInfo?`\n💰 Payment: ${T.season.paymentInfo}`:""}\n🌍 All timezones welcome · Games played on weekends`;
                 return(<>
                   <div style={{background:"#36393F",border:"1px solid #4F545C",borderRadius:8,padding:16,fontFamily:"monospace",fontSize:12,color:"#DCDDDE",whiteSpace:"pre-wrap",marginBottom:10,lineHeight:1.6,maxHeight:340,overflow:"auto"}}>{text}</div>
                   <button style={S.btn("gold")} onClick={()=>{navigator.clipboard.writeText(text);toast$("Copied!");}}>📋 Copy</button>
@@ -2317,11 +2763,13 @@ export default function App(){
                     ["Placement Games","placementGames","number",T.season.placementGames],
                     ["Swiss Rounds","swissRounds","number",T.season.swissRounds],
                     ["Top N Playoff Cutoff","top8Cut","number",T.season.top8Cut],
-                    ["Prize Pool Fee ($) — distributed to winners","prizeFee","number",T.season.prizeFee||0],
+                    ["Default Prize Fee ($) for NEW divisions","prizeFee","number",T.season.prizeFee||0],
                   ].map(([label,field,type,val])=>(
                     <div key={field}><label style={S.lbl}>{label}</label>
                       <input style={S.inp} type={type} value={val}
-                        onChange={e=>saveTour(T.code,t=>({...t,season:{...t.season,[field]:type==="number"?Number(e.target.value):e.target.value}}))}/></div>
+                        onChange={e=>saveTour(T.code,t=>({...t,season:{...t.season,[field]:type==="number"?Number(e.target.value):e.target.value}}))}/>
+                      {field==="prizeFee"&&<div style={{color:C.dim,fontSize:10,marginTop:3}}>Each division has its own prize fee — set those in Admin → Tiers. This value is only the starting default for divisions you add later.</div>}
+                    </div>
                   ))}
                   {/* Admin fee is READ-ONLY here — only the platform super admin can set it */}
                   <div>
@@ -2330,12 +2778,46 @@ export default function App(){
                       <span>${T.season.adminFee||0} per player</span>
                       <span style={{fontSize:10,letterSpacing:1}}>🔒 LOCKED</span>
                     </div>
-                    <div style={{color:C.dim,fontSize:10,marginTop:3}}>Contact the platform organiser to change this amount.</div>
+                    <div style={{color:C.dim,fontSize:10,marginTop:3}}>Contact the platform organiser to change this amount. This applies to every division.</div>
                   </div>
                   <div style={{gridColumn:"1/-1"}}><label style={S.lbl}>Additional Payment Notes (public, optional)</label>
                     <input style={S.inp} placeholder="e.g. Include your Discord tag in the PayPal note" value={T.season.paymentInfo||""}
                       onChange={e=>saveTour(T.code,t=>({...t,season:{...t.season,paymentInfo:e.target.value}}))}/></div>
                 </div>
+
+                {/* Host's own kickback earnings — read-only, builds trust */}
+                {(T.season.kickbackPercent||0)>0&&(()=>{
+                  const owed=getKickbackOwed(T);
+                  const paid=getKickbackPaid(T);
+                  const outstanding=getKickbackOutstanding(T);
+                  return(
+                    <div style={{marginTop:16,padding:"14px",background:C.purple+"14",border:`1px solid ${C.purple}44`,borderRadius:6}}>
+                      <div style={{color:C.purple,fontSize:12,letterSpacing:1,textTransform:"uppercase",marginBottom:8,fontWeight:"bold"}}>
+                        💸 Your Hosting Bonus
+                      </div>
+                      <p style={{color:C.dim,fontSize:12,marginBottom:10,lineHeight:1.6}}>
+                        The platform organiser shares <strong style={{color:C.gold}}>{T.season.kickbackPercent}%</strong> of the platform admin fee back with you as a thank-you for hosting this tournament.
+                      </p>
+                      <div style={S.grid("1fr 1fr 1fr",10)}>
+                        <div>
+                          <div style={{color:C.dim,fontSize:10,marginBottom:4}}>EARNED SO FAR</div>
+                          <div style={{color:C.gold,fontSize:16,fontWeight:"bold"}}>${owed.toFixed(2)}</div>
+                        </div>
+                        <div>
+                          <div style={{color:C.dim,fontSize:10,marginBottom:4}}>PAID TO YOU</div>
+                          <div style={{color:C.moss,fontSize:16,fontWeight:"bold"}}>${paid.toFixed(2)}</div>
+                        </div>
+                        <div>
+                          <div style={{color:C.dim,fontSize:10,marginBottom:4}}>STILL OWED TO YOU</div>
+                          <div style={{color:outstanding>0?C.ember:C.dim,fontSize:16,fontWeight:"bold"}}>${outstanding.toFixed(2)}</div>
+                        </div>
+                      </div>
+                      <div style={{color:C.dim,fontSize:11,marginTop:10}}>
+                        The platform organiser sends this directly to your PayPal email on file as players' fees are confirmed.
+                      </div>
+                    </div>
+                  );
+                })()}
                 <div style={{marginTop:16}}>
                   <button style={S.btn("ember")} onClick={()=>resetAllPayments(T.code)}>
                     🔄 Reset All Payments for Next Season
@@ -2468,14 +2950,17 @@ export default function App(){
             {/* TIERS */}
             {tAdminTab==="tiers"&&(
               <div style={S.card}>
-                <div style={S.cardT}>🏅 Division Configuration & Prize Splits</div>
+                <div style={S.cardT}>🏅 Division Configuration, Entry Fees & Prize Splits</div>
                 <p style={{color:C.dim,fontSize:12,marginBottom:16,lineHeight:1.6}}>
+                  Set a prize fee per division — make some divisions free (e.g. low ELO) and others paid (e.g. higher ELO).
                   Set the cash prize percentage for 1st, 2nd, and 3rd place in each division. Percentages should total 100%.
                   The live prize pool shown updates automatically as more players' payments are confirmed received.
                 </p>
                 {T.season.tiers.map((tier)=>{
+                  const tierPrizeFee=tier.prizeFee??T.season.prizeFee??0;
+                  const tierTotalFee=(T.season.adminFee||0)+tierPrizeFee;
                   const paidInTier=T.players.filter(p=>p.tierId===tier.id&&p.paymentStatus==="received"&&!p.banned).length;
-                  const tierPrizePool=paidInTier*(T.season.prizeFee||0);
+                  const tierPrizePool=paidInTier*tierPrizeFee;
                   const split=tier.prizeSplit||{first:60,second:25,third:15};
                   const splitTotal=(split.first||0)+(split.second||0)+(split.third||0);
                   return(
@@ -2497,12 +2982,34 @@ export default function App(){
                       }}>✕</button>
                     </div>
 
+                    {/* Prize fee for this division */}
+                    <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${C.stone}`}}>
+                      <div style={S.grid("1fr 1fr",10)}>
+                        <div>
+                          <label style={S.lbl}>Prize Fee for {tier.name} ($, 0 = free)</label>
+                          <input style={S.inp} type="number" min={0} value={tierPrizeFee}
+                            onChange={e=>{
+                              const val=Number(e.target.value)||0;
+                              saveTour(T.code,t=>({...t,season:{...t.season,tiers:t.season.tiers.map(x=>x.id!==tier.id?x:{...x,prizeFee:val})}}));
+                            }}/>
+                        </div>
+                        <div style={{display:"flex",flexDirection:"column",justifyContent:"center"}}>
+                          <label style={S.lbl}>Total Entry (admin + prize)</label>
+                          {tierTotalFee>0?(
+                            <span style={S.badge(C.gold)}>${tierTotalFee} (${T.season.adminFee||0} admin + ${tierPrizeFee} prize)</span>
+                          ):(
+                            <span style={S.badge(C.moss)}>🆓 Free Division</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
                     {/* Prize split + live pool */}
                     <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${C.stone}`}}>
                       <div style={{...S.row(10),flexWrap:"wrap",marginBottom:8}}>
                         <span style={{color:C.gold,fontSize:12,fontWeight:"bold"}}>🏆 Live Prize Pool:</span>
                         <span style={{color:C.moss,fontSize:16,fontWeight:"bold"}}>${tierPrizePool}</span>
-                        <span style={{color:C.dim,fontSize:11}}>({paidInTier} paid player{paidInTier!==1?"s":""} × ${T.season.prizeFee||0})</span>
+                        <span style={{color:C.dim,fontSize:11}}>({paidInTier} paid player{paidInTier!==1?"s":""} × ${tierPrizeFee})</span>
                       </div>
                       <div style={S.grid("1fr 1fr 1fr",10)}>
                         {[["first","🥇 1st Place %"],["second","🥈 2nd Place %"],["third","🥉 3rd Place %"]].map(([key,label])=>(
@@ -2528,7 +3035,7 @@ export default function App(){
                 })}
                 <button style={S.btn("gold")} onClick={()=>{
                   const last=T.season.tiers[T.season.tiers.length-1];
-                  const newT={id:uid(),name:"New Division",min:(last?.max||999)+1,max:9999,color:C.steel,icon:"🎯",prizeSplit:{first:60,second:25,third:15}};
+                  const newT={id:uid(),name:"New Division",min:(last?.max||999)+1,max:9999,color:C.steel,icon:"🎯",prizeFee:T.season.prizeFee||0,prizeSplit:{first:60,second:25,third:15}};
                   saveTour(T.code,t=>({...t,season:{...t.season,tiers:[...t.season.tiers.map(x=>x.max===9999?{...x,max:newT.min-1}:x),newT]}}));
                 }}>+ Add Division</button>
               </div>
@@ -2573,8 +3080,9 @@ export default function App(){
 
             {/* PAYMENTS */}
             {tAdminTab==="payments"&&(()=>{
-              const totalFee=(T.season.adminFee||0)+(T.season.prizeFee||0);
-              const eligible=T.players.filter(p=>!p.banned&&totalFee>0);
+              const anyFee=T.season.tiers.some(t=>getTierTotalFee(T,t.id)>0);
+              // Eligible = classified into a tier that actually has a fee
+              const eligible=T.players.filter(p=>!p.banned&&p.tierId&&getTierTotalFee(T,p.tierId)>0);
               const noneCount=eligible.filter(p=>p.paymentStatus==="none"||!p.paymentStatus).length;
               const submittedCount=eligible.filter(p=>p.paymentStatus==="submitted").length;
               const receivedCount=eligible.filter(p=>p.paymentStatus==="received").length;
@@ -2605,21 +3113,25 @@ export default function App(){
                 <div style={{background:C.steel+"18",border:`1px solid ${C.steel}44`,borderRadius:6,
                   padding:"10px 14px",margin:"16px 0",fontSize:12,color:C.light,lineHeight:1.6}}>
                   <strong style={{color:C.gold}}>How payments work:</strong><br/>
-                  Players pay via PayPal — admin fee to the platform, prize fee to your PayPal email — then click "I've Paid" themselves.
+                  Each division can have a different fee. Players pay via PayPal — admin fee to the platform, prize fee to your PayPal email — then click "I've Paid" themselves.
                   When you confirm receipt in your PayPal account, click <strong>Confirm Received</strong> below to unlock their tournament access.
-                  Only "Received" players can play in paid tournament brackets. Placement games remain free for everyone.
+                  Only "Received" players can play in paid divisions. Free divisions and placement games never require payment.
                 </div>
 
-                {totalFee===0&&<p style={{color:C.dim}}>This tournament has no entry fee — all classified players can play for free.</p>}
+                {!anyFee&&<p style={{color:C.dim}}>No division has an entry fee — all classified players can play for free.</p>}
+                {anyFee&&eligible.length===0&&<p style={{color:C.dim}}>No players are currently classified into a paid division.</p>}
 
-                {totalFee>0&&eligible.map(p=>{
+                {eligible.map(p=>{
                   const status=p.paymentStatus||"none";
                   const statusColor=status==="received"?C.moss:status==="submitted"?C.gold:C.ember;
+                  const playerFee=getPlayerTotalFee(T,p);
                   return(<div key={p.id} style={{...S.row(10),padding:"10px 12px",borderRadius:6,
                     background:statusColor+"18",border:`1px solid ${statusColor}44`,marginBottom:8,flexWrap:"wrap"}}>
                     <div style={{flex:1,minWidth:180}}>
-                      <div style={{fontWeight:"bold",fontSize:13}}>{p.name}</div>
-                      <div style={{color:C.dim,fontSize:11}}>{p.email} · {p.discord}</div>
+                      <div style={{fontWeight:"bold",fontSize:13}}>{p.name}
+                        <span style={{...S.badge(p.tier?.color||C.dim),marginLeft:8,fontSize:10}}>{p.tier?.icon} {p.tier?.name}</span>
+                      </div>
+                      <div style={{color:C.dim,fontSize:11}}>{p.email} · {p.discord} · ${playerFee} owed</div>
                     </div>
                     <span style={S.badge(statusColor)}>
                       {status==="received"?"✓ Received":status==="submitted"?"⏳ Submitted":"✕ No Payment"}
@@ -2781,7 +3293,8 @@ export default function App(){
           const tierData=T.season.tiers.find(t=>t.id===p.tierId);
           const myPlacementMatches=(T.placementMatches||[]).filter(m=>m.p1===p.id||m.p2===p.id)
             .sort((a,b)=>(a.scheduledTime||"").localeCompare(b.scheduledTime||""));
-          const totalFee=(T.season.adminFee||0)+(T.season.prizeFee||0);
+          const totalFee=p.tierId?getPlayerTotalFee(T,p):0;
+          const myPrizeFee=p.tierId?getTierPrizeFee(T,p.tierId):0;
 
           return(
             <div>
@@ -2832,16 +3345,16 @@ export default function App(){
                     </div>
                   </div>
 
-                  {/* PAYMENT SECTION — shown if there's a fee and player hasn't fully paid */}
-                  {totalFee>0&&p.paymentStatus!=="received"&&(()=>{
+                  {/* PAYMENT SECTION — shown if player is classified into a paid division and hasn't fully paid */}
+                  {p.classified&&totalFee>0&&p.paymentStatus!=="received"&&(()=>{
                     const note=`${p.email} | ${T.name} | ${p.discord}`;
                     const adminPaypalUrl=buildPaypalUrl("mlandry2011@gmail.com",T.season.adminFee||0,`Admin Fee - ${note}`);
-                    const prizePaypalUrl=T.hostEmail?buildPaypalUrl(T.hostEmail,T.season.prizeFee||0,`Prize Fee - ${note}`):null;
+                    const prizePaypalUrl=T.hostEmail?buildPaypalUrl(T.hostEmail,myPrizeFee,`Prize Fee - ${note}`):null;
                     return(
                       <div style={{...S.card,border:`1px solid ${C.gold}55`}}>
                         <div style={S.cardT}>💳 Pay Your Entry Fee</div>
                         <p style={{color:C.dim,fontSize:13,marginBottom:14,lineHeight:1.7}}>
-                          Your entry fee is split into two PayPal payments. Send both, then click "I've Paid Both Fees" below.
+                          Your <strong style={{color:tierData?.color||C.gold}}>{tierData?.name}</strong> division entry fee is split into two PayPal payments. Send both, then click "I've Paid Both Fees" below.
                           The organiser will confirm receipt and unlock your tournament access.
                         </p>
                         <div style={S.grid("1fr 1fr",12)}>
@@ -2855,7 +3368,7 @@ export default function App(){
                           </div>
                           <div style={{padding:"14px",background:C.obsidian,borderRadius:6,border:`1px solid ${C.stone}`}}>
                             <div style={{color:C.moss,fontWeight:"bold",fontSize:13,marginBottom:6}}>2. Prize Pool Fee</div>
-                            <div style={{color:C.light,fontSize:18,fontWeight:"bold",marginBottom:8}}>${T.season.prizeFee||0}</div>
+                            <div style={{color:C.light,fontSize:18,fontWeight:"bold",marginBottom:8}}>${myPrizeFee}</div>
                             {prizePaypalUrl?(
                               <a href={prizePaypalUrl} target="_blank" rel="noopener noreferrer"
                                 style={{...S.btn("green"),display:"inline-block",textDecoration:"none",fontSize:11,padding:"8px 14px"}}>
