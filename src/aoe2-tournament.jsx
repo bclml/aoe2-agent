@@ -8,6 +8,62 @@ const C = {
   teal:"#1A5050", blue:"#1A3A5A",
 };
 
+// ── GLOBAL UX POLISH (pure CSS — no behavior changes) ──────────────────────────
+// Injected once per top-level view via <style>. Every rule here is purely
+// cosmetic: hover/focus feedback, smoother transitions, themed scrollbars,
+// and a mobile-responsive collapse for the grid layouts already used
+// throughout the app. Nothing here touches state, data, or event handlers.
+const GLOBAL_CSS = `
+  *{ box-sizing:border-box; }
+  ::selection{ background:${C.gold}55; color:${C.light}; }
+  ::-webkit-scrollbar{ width:10px; height:10px; }
+  ::-webkit-scrollbar-track{ background:${C.obsidian}; }
+  ::-webkit-scrollbar-thumb{ background:${C.stone}; border-radius:6px; border:2px solid ${C.obsidian}; }
+  ::-webkit-scrollbar-thumb:hover{ background:${C.gold}66; }
+
+  button{ transition: transform .12s ease, filter .12s ease, box-shadow .12s ease, opacity .12s ease; }
+  button:hover:not(:disabled){ filter:brightness(1.10); transform:translateY(-1px); }
+  button:active:not(:disabled){ transform:translateY(0); filter:brightness(0.96); }
+  button:disabled{ cursor:not-allowed; }
+
+  a{ transition: filter .12s ease, transform .12s ease, border-color .15s ease; }
+  a:hover{ filter:brightness(1.08); }
+
+  input,select,textarea{ transition: border-color .15s ease, box-shadow .15s ease; }
+  input:focus,select:focus,textarea:focus{
+    border-color:${C.gold}99 !important;
+    box-shadow:0 0 0 3px ${C.gold}22;
+    outline:none;
+  }
+
+  .aoe2-card-link:hover{
+    border-color:${C.gold}88 !important;
+    transform:translateY(-2px);
+    box-shadow:0 6px 18px #00000055;
+  }
+
+  @keyframes aoe2FadeIn{ from{opacity:0; transform:translateY(6px);} to{opacity:1; transform:translateY(0);} }
+  .aoe2-fade-in{ animation:aoe2FadeIn .25s ease-out; }
+
+  @keyframes aoe2ToastIn{ from{opacity:0; transform:translateX(16px);} to{opacity:1; transform:translateX(0);} }
+  .aoe2-toast{ animation:aoe2ToastIn .2s ease-out; }
+
+  @media (max-width: 680px){
+    [style*="grid-template-columns: 1fr 1fr"],
+    [style*="grid-template-columns:1fr 1fr"],
+    [style*="grid-template-columns: 1fr auto 1fr"],
+    [style*="grid-template-columns:1fr auto 1fr"],
+    [style*="grid-template-columns: repeat(2,1fr)"],
+    [style*="grid-template-columns:repeat(2,1fr)"],
+    [style*="grid-template-columns: repeat(6,1fr)"],
+    [style*="grid-template-columns:repeat(6,1fr)"]{
+      grid-template-columns: 1fr !important;
+    }
+  }
+`;
+
+function GlobalStyle(){ return <style>{GLOBAL_CSS}</style>; }
+
 // ── CONSTANTS ──────────────────────────────────────────────────────────────────
 const TIMEZONES = [
   {label:"Pacific (PT)",   value:"America/Vancouver", abbr:"PT"  },
@@ -331,7 +387,7 @@ const DEFAULT_MASTER={
 // ── STYLES ─────────────────────────────────────────────────────────────────────
 const S={
   btn:(v="gold",dis=false)=>({
-    padding:"9px 18px",border:"none",borderRadius:4,
+    padding:"9px 18px",border:"none",borderRadius:6,
     cursor:dis?"not-allowed":"pointer",
     fontFamily:"Georgia,serif",fontSize:12,fontWeight:"bold",
     letterSpacing:1,textTransform:"uppercase",opacity:dis?.4:1,
@@ -340,25 +396,27 @@ const S={
                v==="green"?C.moss:v==="red"?C.ember:v==="steel"?C.steel:
                v==="purple"?C.purple:v==="teal"?C.teal:C.stone,
     color:v==="gold"?C.obsidian:C.light,
-    boxShadow:v==="gold"?`0 2px 10px ${C.gold}44`:"none",
+    boxShadow:v==="gold"?`0 2px 10px ${C.gold}44`:"0 2px 8px #00000033",
   }),
   inp:{background:C.obsidian,border:`1px solid ${C.stone}`,color:C.light,
-    padding:"9px 12px",borderRadius:4,fontFamily:"Georgia,serif",
-    fontSize:13,width:"100%",boxSizing:"border-box",outline:"none"},
+    padding:"9px 12px",borderRadius:6,fontFamily:"Georgia,serif",
+    fontSize:13,width:"100%",boxSizing:"border-box",outline:"none",
+    transition:"border-color .15s ease, box-shadow .15s ease"},
   lbl:{display:"block",color:C.dim,fontSize:11,letterSpacing:1,
        textTransform:"uppercase",marginBottom:5},
   card:{background:`linear-gradient(160deg,${C.parch},${C.forge})`,
-    border:`1px solid ${C.gold}33`,borderRadius:8,padding:"22px",marginBottom:18},
+    border:`1px solid ${C.gold}33`,borderRadius:10,padding:"22px",marginBottom:18,
+    boxShadow:"0 4px 16px #00000038"},
   cardT:{color:C.gold,fontSize:14,fontWeight:"bold",letterSpacing:2,
     textTransform:"uppercase",marginBottom:14,
     borderBottom:`1px solid ${C.gold}22`,paddingBottom:8},
   badge:(c)=>({display:"inline-flex",alignItems:"center",gap:4,
-    padding:"2px 9px",borderRadius:10,fontSize:11,
+    padding:"3px 10px",borderRadius:12,fontSize:11,fontWeight:"bold",letterSpacing:.3,
     background:c+"22",border:`1px solid ${c}55`,color:c}),
   grid:(cols,gap=14)=>({display:"grid",gridTemplateColumns:cols,gap}),
   row:(gap=12,align="center")=>({display:"flex",gap,alignItems:align}),
-  modal:{position:"fixed",inset:0,background:"#00000099",zIndex:300,
-    display:"flex",alignItems:"center",justifyContent:"center"},
+  modal:{position:"fixed",inset:0,background:"#000000B0",zIndex:300,
+    display:"flex",alignItems:"center",justifyContent:"center",backdropFilter:"blur(3px)"},
 };
 
 // ── LOBBY BOX ──────────────────────────────────────────────────────────────────
@@ -1655,10 +1713,12 @@ export default function App(){
   // ── LANDING PAGE ──────────────────────────────────────────────────────────
   if(route.type==="landing"){
     return(
-      <div style={{minHeight:"100vh",background:`radial-gradient(ellipse at top,#1A0E00,${C.obsidian})`,
+      <div className="aoe2-fade-in" style={{minHeight:"100vh",background:`radial-gradient(ellipse at top,#1A0E00,${C.obsidian})`,
         color:C.light,fontFamily:"Georgia,serif",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"40px 20px"}}>
-        <div style={{fontSize:56,marginBottom:16}}>⚔️</div>
-        <h1 style={{color:C.gold,fontSize:28,letterSpacing:4,textTransform:"uppercase",margin:"0 0 8px",textAlign:"center"}}>
+        <GlobalStyle/>
+        <div style={{fontSize:60,marginBottom:16,filter:`drop-shadow(0 0 20px ${C.gold}33)`}}>⚔️</div>
+        <h1 style={{color:C.gold,fontSize:30,letterSpacing:4,textTransform:"uppercase",margin:"0 0 8px",textAlign:"center",
+          textShadow:`0 0 30px ${C.gold}44`}}>
           AoE2 Tournament Agent
         </h1>
         <p style={{color:C.dim,fontSize:14,textAlign:"center",maxWidth:500,lineHeight:1.7,marginBottom:24}}>
@@ -1666,7 +1726,7 @@ export default function App(){
         </p>
         {/* Host CTA */}
         <div style={{background:C.gold+"18",border:`1px solid ${C.gold}55`,borderRadius:8,
-          padding:"14px 24px",marginBottom:28,textAlign:"center",maxWidth:480}}>
+          padding:"14px 24px",marginBottom:28,textAlign:"center",maxWidth:480,boxShadow:`0 4px 18px #00000033`}}>
           <div style={{color:C.gold,fontWeight:"bold",fontSize:14,marginBottom:6}}>
             🏆 Want to host a tournament for your Discord server?
           </div>
@@ -1692,10 +1752,10 @@ export default function App(){
                 const tourPrizePaid=(tour.feeCollected||[]).filter(f=>f.type==="prizeFee").reduce((s,f)=>s+f.amount,0);
                 const status=getTourStatus(tour);
                 return(
-                  <a key={tour.code} href={`#/t/${tour.code}`} style={{
+                  <a key={tour.code} href={`#/t/${tour.code}`} className="aoe2-card-link" style={{
                     ...S.card,textDecoration:"none",color:C.light,
                     border:`1px solid ${C.gold}44`,cursor:"pointer",
-                    transition:"border-color .2s",display:"block",marginBottom:0,
+                    transition:"border-color .2s, transform .2s, box-shadow .2s",display:"block",marginBottom:0,
                   }}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8,marginBottom:4}}>
                       <div style={{color:C.gold,fontSize:16,fontWeight:"bold"}}>{tour.name}</div>
@@ -1717,7 +1777,7 @@ export default function App(){
           </div>
         )}
         {toast&&(
-          <div style={{position:"fixed",top:16,right:16,zIndex:400,padding:"12px 20px",borderRadius:6,
+          <div className="aoe2-toast" style={{position:"fixed",top:16,right:16,zIndex:400,padding:"12px 20px",borderRadius:6,
             fontSize:13,fontWeight:"bold",background:toast.type==="error"?C.ember:C.moss,color:C.light}}>
             {toast.msg}
           </div>
@@ -1789,10 +1849,12 @@ export default function App(){
   // ── SUPER ADMIN VIEW ──────────────────────────────────────────────────────
   if(route.type==="superadmin"){
     return(
-      <div style={{minHeight:"100vh",background:`radial-gradient(ellipse at top,#1A0E00,${C.obsidian})`,
+      <div className="aoe2-fade-in" style={{minHeight:"100vh",background:`radial-gradient(ellipse at top,#1A0E00,${C.obsidian})`,
         color:C.light,fontFamily:"Georgia,serif",paddingBottom:60}}>
-        <div style={{background:`linear-gradient(180deg,${C.obsidian},${C.parch})`,
-          borderBottom:`2px solid ${C.gold}`,padding:"16px 24px",display:"flex",alignItems:"center",gap:16}}>
+        <GlobalStyle/>
+        <div style={{position:"sticky",top:0,zIndex:50,background:`linear-gradient(180deg,${C.obsidian},${C.parch})`,
+          borderBottom:`2px solid ${C.gold}`,padding:"16px 24px",display:"flex",alignItems:"center",gap:16,
+          boxShadow:"0 4px 14px #00000044"}}>
           <div style={{flex:1}}>
             <div style={{fontSize:22,color:C.gold,fontWeight:"bold",letterSpacing:3}}>⚔️ PLATFORM ADMIN</div>
             <div style={{color:C.dim,fontSize:11,marginTop:2}}>
@@ -2290,7 +2352,7 @@ export default function App(){
         )}
 
         {toast&&(
-          <div style={{position:"fixed",top:16,right:16,zIndex:400,padding:"12px 20px",borderRadius:6,
+          <div className="aoe2-toast" style={{position:"fixed",top:16,right:16,zIndex:400,padding:"12px 20px",borderRadius:6,
             fontSize:13,fontWeight:"bold",background:toast.type==="error"?C.ember:C.moss,color:C.light}}>
             {toast.msg}
           </div>
@@ -2304,9 +2366,10 @@ export default function App(){
   // ── TOURNAMENT VIEW (per-server) ──────────────────────────────────────────
   if(!T){
     return(
-      <div style={{minHeight:"100vh",background:`radial-gradient(ellipse at top,#1A0E00,${C.obsidian})`,
+      <div className="aoe2-fade-in" style={{minHeight:"100vh",background:`radial-gradient(ellipse at top,#1A0E00,${C.obsidian})`,
         color:C.light,fontFamily:"Georgia,serif",display:"flex",flexDirection:"column",
         alignItems:"center",justifyContent:"center",padding:"40px 20px",textAlign:"center"}}>
+        <GlobalStyle/>
         <div style={{fontSize:52,marginBottom:12}}>⚔️</div>
         <div style={{color:C.gold,fontSize:20,fontWeight:"bold",marginBottom:8}}>Tournament Not Found</div>
         <div style={{color:C.dim,fontSize:13,marginBottom:20}}>The tournament code "{route.code}" does not exist.</div>
@@ -2327,61 +2390,64 @@ export default function App(){
   ];
 
   return(
-    <div style={{minHeight:"100vh",background:`radial-gradient(ellipse at top,#1A0E00,${C.obsidian})`,
+    <div className="aoe2-fade-in" style={{minHeight:"100vh",background:`radial-gradient(ellipse at top,#1A0E00,${C.obsidian})`,
       color:C.light,fontFamily:"Georgia,serif",paddingBottom:60}}>
+      <GlobalStyle/>
 
-      {/* HEADER */}
-      <div style={{background:`linear-gradient(180deg,${C.obsidian},${C.parch})`,
-        borderBottom:`2px solid ${C.gold}`,padding:"14px 24px",display:"flex",alignItems:"center",gap:12}}>
-        <div style={{flex:1}}>
-          <div style={{fontSize:20,color:C.gold,fontWeight:"bold",letterSpacing:3}}>{T.name} ⚔️</div>
-          <div style={{color:C.dim,fontSize:10,marginTop:2}}>
-            {T.season.name} · {T.players.filter(p=>!p.banned).length} players · {T.players.filter(p=>p.classified&&!p.banned).length} classified
-            {tournamentDisputes.length>0&&<span style={{color:C.ember}}> · ⚠️ {tournamentDisputes.length} dispute{tournamentDisputes.length!==1?"s":""}</span>}
+      <div style={{position:"sticky",top:0,zIndex:50,boxShadow:"0 4px 14px #00000044"}}>
+        {/* HEADER */}
+        <div style={{background:`linear-gradient(180deg,${C.obsidian},${C.parch})`,
+          borderBottom:`2px solid ${C.gold}`,padding:"14px 24px",display:"flex",alignItems:"center",gap:12}}>
+          <div style={{flex:1}}>
+            <div style={{fontSize:20,color:C.gold,fontWeight:"bold",letterSpacing:3}}>{T.name} ⚔️</div>
+            <div style={{color:C.dim,fontSize:10,marginTop:2}}>
+              {T.season.name} · {T.players.filter(p=>!p.banned).length} players · {T.players.filter(p=>p.classified&&!p.banned).length} classified
+              {tournamentDisputes.length>0&&<span style={{color:C.ember}}> · ⚠️ {tournamentDisputes.length} dispute{tournamentDisputes.length!==1?"s":""}</span>}
+            </div>
+          </div>
+          <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+            {loggedInPlayer?(
+              <div style={{textAlign:"right"}}>
+                <div style={{fontSize:11,color:C.gold,fontWeight:"bold"}}>{loggedInPlayer.name}</div>
+                <div style={{fontSize:10,color:C.dim,marginBottom:4}}>{loggedInPlayer.tier?.icon} {loggedInPlayer.tier?.name} · {loggedInPlayer.elo} ELO</div>
+                <div style={S.row(6)}>
+                  <button onClick={()=>setTab("portal")} style={{...S.btn("gold"),fontSize:10,padding:"5px 10px"}}>My Portal</button>
+                  <button onClick={logoutPlayer} style={{...S.btn("stone"),fontSize:10,padding:"5px 10px"}}>Log Out</button>
+                </div>
+              </div>
+            ):(
+              <button onClick={()=>setTab("login")} style={{...S.btn("gold"),fontSize:11}}>🔑 Player Login</button>
+            )}
+            <button onClick={()=>setStreamPrivacy(s=>!s)} style={{...S.btn(streamPrivacy?"gold":"stone"),fontSize:10,padding:"5px 10px"}}
+              title="Hides lobby passwords and admin report buttons — safe for screen sharing or streaming">
+              {streamPrivacy?"🔒 Streaming Privacy ON":"📺 Streaming Privacy"}
+            </button>
+            <a href="#/" style={{...S.btn("stone"),fontSize:10,padding:"5px 10px",textDecoration:"none"}}>⚔️ All Tournaments</a>
           </div>
         </div>
-        <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-          {loggedInPlayer?(
-            <div style={{textAlign:"right"}}>
-              <div style={{fontSize:11,color:C.gold,fontWeight:"bold"}}>{loggedInPlayer.name}</div>
-              <div style={{fontSize:10,color:C.dim,marginBottom:4}}>{loggedInPlayer.tier?.icon} {loggedInPlayer.tier?.name} · {loggedInPlayer.elo} ELO</div>
-              <div style={S.row(6)}>
-                <button onClick={()=>setTab("portal")} style={{...S.btn("gold"),fontSize:10,padding:"5px 10px"}}>My Portal</button>
-                <button onClick={logoutPlayer} style={{...S.btn("stone"),fontSize:10,padding:"5px 10px"}}>Log Out</button>
-              </div>
-            </div>
-          ):(
-            <button onClick={()=>setTab("login")} style={{...S.btn("gold"),fontSize:11}}>🔑 Player Login</button>
-          )}
-          <button onClick={()=>setStreamPrivacy(s=>!s)} style={{...S.btn(streamPrivacy?"gold":"stone"),fontSize:10,padding:"5px 10px"}}
-            title="Hides lobby passwords and admin report buttons — safe for screen sharing or streaming">
-            {streamPrivacy?"🔒 Streaming Privacy ON":"📺 Streaming Privacy"}
-          </button>
-          <a href="#/" style={{...S.btn("stone"),fontSize:10,padding:"5px 10px",textDecoration:"none"}}>⚔️ All Tournaments</a>
-        </div>
-      </div>
 
-      {/* NAV */}
-      <div style={{display:"flex",background:C.parch,borderBottom:`1px solid ${C.stone}`,overflowX:"auto"}}>
-        {[["home","🏰 Home"],["register","📋 Register"],["tiers","🏆 Divisions"],
-          ["bracket","📊 Bracket"],["schedule","📅 Schedule"],["discord","💬 Discord"],
-          ["tadmin","⚙️ Admin"],
-          ...(loggedInPlayer?[["portal","🎮 My Portal"]]:
-              [["login","🔑 Login"]])
-        ].map(([k,l])=>(
-          <button key={k} onClick={()=>{setTab(k);if(k!=="tadmin"){setTAdminUnlocked(false);setTAdminPwInput("");setTAdminPwError(false);}}}
-            style={{padding:"10px 14px",background:"none",border:"none",
-              color:tab===k?C.gold:C.dim,cursor:"pointer",whiteSpace:"nowrap",
-              borderBottom:tab===k?`2px solid ${C.gold}`:"2px solid transparent",
-              fontFamily:"Georgia,serif",fontSize:11,letterSpacing:1,textTransform:"uppercase"}}>
-            {l}
-          </button>
-        ))}
+        {/* NAV */}
+        <div style={{display:"flex",background:C.parch,borderBottom:`1px solid ${C.stone}`,overflowX:"auto"}}>
+          {[["home","🏰 Home"],["register","📋 Register"],["tiers","🏆 Divisions"],
+            ["bracket","📊 Bracket"],["schedule","📅 Schedule"],["discord","💬 Discord"],
+            ["tadmin","⚙️ Admin"],
+            ...(loggedInPlayer?[["portal","🎮 My Portal"]]:
+                [["login","🔑 Login"]])
+          ].map(([k,l])=>(
+            <button key={k} onClick={()=>{setTab(k);if(k!=="tadmin"){setTAdminUnlocked(false);setTAdminPwInput("");setTAdminPwError(false);}}}
+              style={{padding:"10px 14px",background:"none",border:"none",
+                color:tab===k?C.gold:C.dim,cursor:"pointer",whiteSpace:"nowrap",
+                borderBottom:tab===k?`2px solid ${C.gold}`:"2px solid transparent",
+                fontFamily:"Georgia,serif",fontSize:11,letterSpacing:1,textTransform:"uppercase"}}>
+              {l}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* TOAST */}
       {toast&&(
-        <div style={{position:"fixed",top:16,right:16,zIndex:400,padding:"12px 20px",borderRadius:6,
+        <div className="aoe2-toast" style={{position:"fixed",top:16,right:16,zIndex:400,padding:"12px 20px",borderRadius:6,
           fontSize:13,fontWeight:"bold",background:toast.type==="error"?C.ember:C.moss,color:C.light,boxShadow:"0 4px 20px #00000066"}}>
           {toast.msg}
         </div>
